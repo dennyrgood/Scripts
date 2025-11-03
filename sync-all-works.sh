@@ -7,7 +7,6 @@
 # =========================================================================
 
 # Exit immediately if a command exits with a non-zero status.
-# The previous version used 'set -e' but only on the start. Adding it again.
 set -e
 
 echo "========================================="
@@ -43,30 +42,18 @@ echo ""
 echo "--- Using commit message: \"$COMMIT_MESSAGE\" ---"
 echo ""
 
-# --- 2. FIND ALL REPOSITORIES (AUTOMATIC DISCOVERY) ---
+# --- 2. FIND ALL REPOSITORIES ---
 
 # Find all .git directories starting the search from the determined REPO_ROOT_DIR.
-# Exclude directories containing backup suffixes (*.BKUP, *.bkp, *.BKUP-*).
 REPOS=()
 while IFS= read -r DIR; do
     # Strip the trailing /.git to get the repository path
     REPO_PATH="${DIR%/.git}"
-    # Ensure the script's directory itself (if it's a repo) is processed, but only once
-    if [ "$REPO_PATH" == "$SCRIPT_DIR" ]; then
-        # If the script folder is a repo, it must be the first element
-        REPOS=("${REPO_PATH}" "${REPOS[@]}")
-        continue
-    fi
     REPOS+=("$REPO_PATH")
 done < <(
     # The find command now starts from the absolute path of REPO_ROOT_DIR
-    # It finds all .git directories, pruning out any directories matching backup patterns.
     find "$REPO_ROOT_DIR" -type d \( -name "*.BKUP" -o -name "*.bkp" -o -name "*.BKUP-*" \) -prune -o -type d -name ".git" -print
 )
-
-# Remove duplicates (important if the script folder is found multiple times)
-REPOS=($(printf "%s\n" "${REPOS[@]}" | sort -u))
-
 
 if [ ${#REPOS[@]} -eq 0 ]; then
     echo "❌ Error: No git repositories found in '$REPO_ROOT_DIR' or its subdirectories."
@@ -91,6 +78,7 @@ for REPO_PATH in "${REPOS[@]}"; do
     echo "========================================="
     
     # Change to repo directory
+    # Using `2>/dev/null` suppresses 'No such file or directory' errors if any
     if ! cd "$REPO_PATH" 2>/dev/null; then
         echo "❌ Error: Could not access $REPO_PATH"
         continue
@@ -109,6 +97,7 @@ for REPO_PATH in "${REPOS[@]}"; do
         if git commit -m "$COMMIT_MESSAGE"; then
             echo "✓ Changes committed."
         else
+            # This catch is for an edge case where commit fails for other reasons
             echo "❌ Commit failed for $REPO_NAME."
             cd "$START_DIR"
             continue
@@ -117,8 +106,11 @@ for REPO_PATH in "${REPOS[@]}"; do
     
     # --- PULL/PUSH BLOCK ---
     
-    # Pull remote changes (using rebase to avoid unnecessary merge commits)
+    # Pull remote changes (using the default remote branch set up in the repo)
     echo "Pulling from remote..."
+    
+    # CRITICAL SECURITY IMPROVEMENT:
+    # Use `git pull --rebase` to avoid creating unnecessary merge commits when syncing.
     if ! git pull --rebase; then
         echo "❌ PULL FAILED! Please resolve conflicts manually in $REPO_PATH"
         cd "$START_DIR"
@@ -128,16 +120,10 @@ for REPO_PATH in "${REPOS[@]}"; do
     
     # Push local changes
     echo "Pushing to remote..."
-    
-    # 1. Attempt standard push
     if git push; then
         echo "✓ Successfully synced $REPO_NAME"
-    # 2. If standard push fails (e.g., first push or missing upstream), try -u
-    elif git push -u origin main; then
-        # If the standard push failed, attempt the explicit first-push command.
-        echo "✓ Successfully synced $REPO_NAME (Set upstream branch)"
     else
-        # If both attempts fail
+        # This push error often means the pull/rebase failed above, but good to catch.
         echo "❌ Push failed for $REPO_NAME"
     fi
     
