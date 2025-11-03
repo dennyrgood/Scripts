@@ -7,7 +7,6 @@
 # =========================================================================
 
 # Exit immediately if a command exits with a non-zero status.
-# The previous version used 'set -e' but only on the start. Adding it again.
 set -e
 
 echo "========================================="
@@ -83,6 +82,10 @@ START_DIR=$(pwd)
 # Loop through each repo
 for REPO_PATH in "${REPOS[@]}"; do
     
+    # Reset tracking variables for this repo
+    COMMITTED_FILES=""
+    PUSH_SUCCESS=false
+
     # Calculate the relative name for display
     REPO_NAME=$(basename "$REPO_PATH")
 
@@ -104,9 +107,10 @@ for REPO_PATH in "${REPOS[@]}"; do
     if git diff --staged --quiet; then
         echo "✓ No changes to commit."
     else
-        # Log the files about to be committed (Local changes)
+        # Capture the list of files about to be committed (Local changes)
+        COMMITTED_FILES=$(git diff --name-only --staged)
         echo "--- ⬆️ Files Committed Locally (Mac) --------------------"
-        git diff --name-only --staged
+        echo "$COMMITTED_FILES"
         echo "--------------------------------------------------------"
         
         # Commit changes
@@ -141,16 +145,18 @@ for REPO_PATH in "${REPOS[@]}"; do
     
     # Log the files that were updated during the pull/rebase (Web to Mac changes)
     if echo "$PULL_OUTPUT" | grep -q "Fast-forward\|Updated"; then
-        echo "--- ⬇️ Files Updated from Web (Pull) -------------------"
         # Find files updated by the last pull (which is a merge or rebase)
-        PULLED_FILES=$(git log --pretty=format: --name-only --since='5 seconds ago' | sort -u)
+        PULLED_FILES=$(echo "$PULL_OUTPUT" | grep -E '(\S+)(\s*)\|' | awk '{print $1}')
+        
+        echo "--- ⬇️ Files Updated from Web (Pull) -------------------"
         if [ -n "$PULLED_FILES" ]; then
             echo "$PULLED_FILES"
         else
-            echo "No files updated in pull."
+            echo "No files updated in pull (or changes were only metadata)."
         fi
         echo "--------------------------------------------------------"
-    else
+    elif [ "$PULL_OUTPUT" != "Current branch main is up to date." ] && [ "$PULL_OUTPUT" != "Current branch master is up to date." ]; then
+        # For other non-failure messages, just confirm no file changes
         echo "No file changes detected during pull."
     fi
 
@@ -159,27 +165,31 @@ for REPO_PATH in "${REPOS[@]}"; do
     echo "Pushing to remote (Mac -> Web)..."
     
     # 1. Attempt standard push
-    PUSH_SUCCESS=false
-    if git push; then
+    PUSH_OUTPUT=$(git push 2>&1)
+    if [ $? -eq 0 ]; then
         PUSH_SUCCESS=true
         echo "✓ Successfully synced $REPO_NAME"
     # 2. If standard push fails (e.g., first push or missing upstream), try -u
-    elif git push -u origin main; then
-        PUSH_SUCCESS=true
-        echo "✓ Successfully synced $REPO_NAME (Set upstream branch)"
     else
-        # If both attempts fail
-        echo "❌ Push failed for $REPO_NAME"
+        # Attempt the explicit first-push command for new repos
+        PUSH_OUTPUT=$(git push -u origin main 2>&1)
+        if [ $? -eq 0 ]; then
+            PUSH_SUCCESS=true
+            echo "✓ Successfully synced $REPO_NAME (Set upstream branch)"
+        else
+            # If both attempts fail
+            echo "$PUSH_OUTPUT"
+            echo "❌ Push failed for $REPO_NAME"
+        fi
     fi
 
-    # Log the files that were pushed
-    if $PUSH_SUCCESS; then
-        # We can't easily capture the push output itself to see file changes, 
-        # so we rely on the commit log to show what was just pushed.
+    # Log the files that were pushed ONLY IF a commit was made locally AND push was successful
+    if $PUSH_SUCCESS && [ -n "$COMMITTED_FILES" ]; then
         echo "--- ⬆️ Files Pushed to Web (Mac) ----------------------"
-        # Note: This displays the files from the commit made locally.
-        git diff --name-only "HEAD^..HEAD" || echo "No files committed or pushed."
+        echo "$COMMITTED_FILES"
         echo "--------------------------------------------------------"
+    elif $PUSH_SUCCESS; then
+        echo "✓ Push successful. Remote was up-to-date with local."
     fi
     
     echo ""
