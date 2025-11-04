@@ -50,6 +50,9 @@ for REPO_PATH in "${REPOS[@]}"; do
     # Change to the repository directory. Uses '|| continue' instead of error logic.
     cd "$REPO_PATH" || continue
     
+    # --- OUTPUT REPO NAME ONLY ---
+    echo "--- PROCESSING: $REPO_NAME ---"
+    
     # --- STAGE & COMMIT BLOCK ---
     
     # Stage all changes
