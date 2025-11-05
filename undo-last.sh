@@ -57,7 +57,9 @@ pause_for_confirmation
 # 2. Perform the Revert
 echo
 echo "Starting 'git revert HEAD'..."
-echo "A text editor will open. Simply SAVE and CLOSE the file to finalize the undo."
+echo "A text editor (Vi/Vim) will open to confirm the commit message."
+echo "-------------------------------------------------"
+echo ">>> VI/VIM INSTRUCTION: To finalize, press ESC, then type :wq, then press Enter. <<<"
 echo "-------------------------------------------------"
 
 # Use 'git revert HEAD'
@@ -78,4 +80,3 @@ else
 fi
 
 exit 0
-
