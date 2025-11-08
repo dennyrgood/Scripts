@@ -3,9 +3,10 @@
 echo
 echo To access website:
 echo
-echo           http://localhost:8000/work.html
+echo           http://localhost:8000/
+
 echo
-echo To stop server:
+echo To stop server, if started with &
 echo
 echo           ps -eaf | grep http.server
 echo
