@@ -51,6 +51,10 @@ fi
 
 # --- 4. Git Operations: Pull and Push to Current Branch ---
 
+# FETCH: Get all tags from remote
+echo "Fetching tags from remote..."
+git fetch --tags
+
 # PULL: Fetch and merge remote changes for the current branch
 echo "Pulling remote changes from origin/$CURRENT_BRANCH..."
 git pull origin "$CURRENT_BRANCH"
@@ -58,9 +62,9 @@ git pull origin "$CURRENT_BRANCH"
 # Check if pull was successful (handles merge conflicts)
 if [ $? -ne 0 ]; then
     echo ""
-    echo "---------------------------------------------------"
+    echo "==================================================="
     echo "ERROR: Pull failed - likely due to merge conflicts"
-    echo "---------------------------------------------------"
+    echo "==================================================="
     echo ""
     echo "What to do next:"
     echo "  1. Run 'git status' to see conflicting files"
@@ -81,9 +85,9 @@ git push -u origin "$CURRENT_BRANCH"
 # Check if push was successful
 if [ $? -ne 0 ]; then
     echo ""
-    echo "---------------------------------------------------"
+    echo "==================================================="
     echo "ERROR: Push failed"
-    echo "---------------------------------------------------"
+    echo "==================================================="
     echo ""
     echo "Possible reasons:"
     echo "  - Network connectivity issues"
