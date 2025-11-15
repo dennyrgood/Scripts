@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# Helper function to show and run git commands
+run_git() {
+    echo "📍 Running: git $@"
+    git "$@"
+    local result=$?
+    echo ""
+    return $result
+}
+
+if [ -z "$1" ]; then
+    echo "Usage: get-previous <filename>"
+    echo "Example: get-previous sync-this.sh"
+    exit 1
+fi
+
+FILENAME="$1"
+
+echo "=== Looking for previous versions of: $FILENAME ==="
+echo ""
+
+# Show commits that modified this file
+echo "Recent commits that changed this file:"
+run_git log --oneline --follow -10 "$FILENAME"
+
+# Ask which version they want
+echo "Enter the commit hash (like 7da1111) to see that version"
+echo "Or press Enter to see the most recent change:"
+read -r COMMIT
+
+if [ -z "$COMMIT" ]; then
+    COMMIT="HEAD~1"
+fi
+
+echo ""
+echo "=== Content from commit $COMMIT ==="
+run_git show "$COMMIT:$FILENAME"
+
+echo ""
+echo "=== What do you want to do? ==="
+echo "1) Save this version as ${FILENAME}.old (for comparison)"
+echo "2) Replace current file with this version"
+echo "3) Just show me the differences"
+echo "4) Never mind, exit"
+read -r CHOICE
+
+case $CHOICE in
+    1)
+        echo "📍 Running: git show $COMMIT:$FILENAME > ${FILENAME}.old"
+        git show "$COMMIT:$FILENAME" > "${FILENAME}.old"
+        echo ""
+        echo "✓ Saved to ${FILENAME}.old"
+        echo "Compare with: vi $FILENAME ${FILENAME}.old"
+        ;;
+    2)
+        echo "⚠️  This will replace your current $FILENAME"
+        echo "Type 'yes' to confirm:"
+        read -r CONFIRM
+        if [ "$CONFIRM" = "yes" ]; then
+            run_git checkout "$COMMIT" -- "$FILENAME"
+            echo "✓ File restored from commit $COMMIT"
+            echo "Now run: ./sync-this.sh \"Restored $FILENAME from $COMMIT\""
+        else
+            echo "Cancelled."
+        fi
+        ;;
+    3)
+        echo "=== Differences between $COMMIT and current ==="
+        run_git diff "$COMMIT" HEAD -- "$FILENAME"
+        ;;
+    4)
+        echo "Exiting."
+        ;;
+    *)
+        echo "Invalid choice. Exiting."
+        ;;
+esac

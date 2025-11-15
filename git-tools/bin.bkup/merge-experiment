@@ -1,0 +1,87 @@
+#!/bin/bash
+
+# Helper function to show and run git commands
+run_git() {
+    echo "📍 Running: git $@"
+    git "$@"
+    local result=$?
+    echo ""
+    return $result
+}
+
+if [ -z "$1" ]; then
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    if [ "$CURRENT_BRANCH" = "main" ]; then
+        echo "Usage: merge-experiment <branch-name>"
+        echo "You're on main. Switch to your experiment branch first."
+        exit 1
+    fi
+    BRANCH_NAME="$CURRENT_BRANCH"
+else
+    BRANCH_NAME="$1"
+fi
+
+echo "Merging experiment branch: $BRANCH_NAME into main"
+echo ""
+
+# Commit any changes first
+if [ -n "$(git status --porcelain)" ]; then
+    echo "Committing current changes..."
+    echo "Enter commit message:"
+    read -r MSG
+    run_git add -A
+    run_git commit -m "$MSG"
+fi
+
+# Switch to main and merge
+run_git checkout main
+run_git merge "$BRANCH_NAME"
+
+if [ $? -eq 0 ]; then
+    echo "✓ Experiment merged successfully!"
+    echo ""
+    echo "Push to GitHub? (yes/no)"
+    read -r PUSH
+    if [ "$PUSH" = "yes" ]; then
+        run_git push
+    fi
+    
+    echo ""
+    echo "Delete experiment branch? (yes/no)"
+    read -r DELETE
+    if [ "$DELETE" = "yes" ]; then
+        echo "📍 Running: git branch -d $BRANCH_NAME"
+        git branch -d "$BRANCH_NAME"
+        echo ""
+        echo "✓ Branch deleted."
+    fi
+    
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "NEXT STEPS: Tag this milestone (optional)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    echo "To mark this as a release version:"
+    echo "  git tag -a v4.1 -m \"Description of changes\""
+    echo "  git push --tags"
+    echo ""
+    echo "The -a flag creates an 'annotated tag' with:"
+    echo "  - Your name and date"
+    echo "  - A message describing the release"
+    echo "  - Recommended for releases"
+    echo ""
+    echo "Then go to GitHub web to create a pretty release page"
+    echo " "
+    echo "Why Bother?
+    echo "
+    echo "Documentation - Explains what changed"
+    echo "Downloads - People can download specific versions"
+    echo "History - Easy to see evolution of your project"
+    echo "Changelog - You have a record of what worked when"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+else
+    echo ""
+    echo "⚠️  Merge had conflicts. Resolve them, then run:"
+    echo "  git commit"
+    echo "  git push"
+fi

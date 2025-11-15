@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# Helper function to show and run git commands
+run_git() {
+    echo "📍 Running: git $@"
+    git "$@"
+    local result=$?
+    echo ""
+    return $result
+}
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+if [ "$CURRENT_BRANCH" = "main" ]; then
+    echo "You're on main branch. Nothing to abandon."
+    exit 0
+fi
+
+echo "⚠️  You're about to abandon branch: $CURRENT_BRANCH"
+echo "All changes on this branch will be lost."
+echo ""
+echo "Type 'abandon' to confirm:"
+read -r CONFIRM
+
+if [ "$CONFIRM" = "abandon" ]; then
+    run_git checkout main
+    echo "📍 Running: git branch -D $CURRENT_BRANCH"
+    git branch -D "$CURRENT_BRANCH"
+    echo ""
+    echo "✓ Branch abandoned. You're back on main with your safe code."
+else
+    echo "Cancelled."
+fi

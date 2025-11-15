@@ -1,0 +1,34 @@
+#!/bin/bash
+
+# Helper function to show and run git commands
+run_git() {
+    echo "📍 Running: git $@"
+    git "$@"
+    local result=$?
+    echo ""
+    return $result
+}
+
+if [ -z "$1" ]; then
+    echo "Usage: what-changed <commit1> <commit2> [filename]"
+    echo "Example: what-changed v2.0 v4.0"
+    echo "Example: what-changed v2.0 HEAD sync-this.sh"
+    echo ""
+    echo "Shows what changed between two commits"
+    exit 1
+fi
+
+COMMIT1="$1"
+COMMIT2="${2:-HEAD}"
+FILENAME="$3"
+
+if [ -n "$FILENAME" ]; then
+    echo "=== Changes to $FILENAME between $COMMIT1 and $COMMIT2 ==="
+    run_git diff "$COMMIT1" "$COMMIT2" -- "$FILENAME"
+else
+    echo "=== All changes between $COMMIT1 and $COMMIT2 ==="
+    run_git diff "$COMMIT1" "$COMMIT2" --stat
+    echo ""
+    echo "For detailed changes, run:"
+    echo "  git diff $COMMIT1 $COMMIT2"
+fi

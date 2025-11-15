@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# Helper function to show and run git commands
+run_git() {
+    echo "📍 Running: git $@"
+    git "$@"
+    local result=$?
+    echo ""
+    return $result
+}
+
+if [ -z "$1" ]; then
+    echo "Usage: safe-experiment <experiment-name>"
+    echo "Example: safe-experiment try-new-parser"
+    echo ""
+    echo "This creates a branch so you can experiment without breaking main."
+    exit 1
+fi
+
+BRANCH_NAME="$1"
+
+# Check for uncommitted changes
+if [ -n "$(git status --porcelain)" ]; then
+    echo "⚠️  You have uncommitted changes:"
+    run_git status --short
+    echo "Commit them first? (yes/no)"
+    read -r COMMIT_FIRST
+    
+    if [ "$COMMIT_FIRST" = "yes" ]; then
+        echo "Enter commit message:"
+        read -r MSG
+        run_git add -A
+        run_git commit -m "$MSG"
+        run_git push
+    else
+        echo "Please commit or stash your changes first."
+        exit 1
+    fi
+fi
+
+echo "Creating experimental branch: $BRANCH_NAME"
+run_git checkout -b "$BRANCH_NAME"
+
+echo "✓ You're now on branch: $BRANCH_NAME"
+echo ""
+echo "Work freely! When done:"
+echo "  - If it worked: merge-experiment $BRANCH_NAME"
+echo "  - If it failed: abandon-experiment"

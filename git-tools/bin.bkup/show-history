@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Helper function to show and run git commands
+run_git() {
+    echo "📍 Running: git $@"
+    git "$@"
+    local result=$?
+    echo ""
+    return $result
+}
+
+if [ -z "$1" ]; then
+    echo "Usage: show-history <filename>"
+    echo "Example: show-history sync-this.sh"
+    exit 1
+fi
+
+FILENAME="$1"
+
+echo "=== Complete history of: $FILENAME ==="
+echo ""
+run_git log --follow --pretty=format:"%h | %ad | %s" --date=short "$FILENAME"
+echo ""
+echo ""
+echo "Tip: Use 'get-previous $FILENAME' to recover an old version"
