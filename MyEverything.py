@@ -5,8 +5,37 @@ import subprocess
 import shlex
 import os
 import datetime 
+import sys # Import for better error logging
 
 class MyEverythingApp:
+    
+    # --- 1. CONFIGURATION CONSTANTS (Leaner, Easier to Modify) ---
+    
+    # Defines Treeview column properties: (header_text, width, internal_data_key)
+    # The internal_data_key is used to fetch raw data from self.file_data for accurate numeric sorting.
+    COLUMN_SETUP = {
+        "#0": {"text": "File Name", "width": 200, "data_key": "Name"},
+        "Folder": {"text": "Folder", "width": 250, "data_key": "Folder"},
+        "Size": {"text": "Size", "width": 80, "data_key": "Size_Bytes"},
+        "Modified": {"text": "Modified Date", "width": 120, "data_key": "Modified_Timestamp"},
+        "Accessed": {"text": "Accessed Date", "width": 120, "data_key": "Accessed_Timestamp"},
+        "Changed": {"text": "Changed Date", "width": 120, "data_key": "Changed_Timestamp"},
+    }
+    
+    # Maps GUI variables to their corresponding 'find' command flags.
+    # The case-sensitive name filter is handled separately below.
+    FIND_FILTERS = [
+        ("file_type", "-type"),
+        ("size_val", "-size"),
+        ("mtime_val", "-mtime"),
+        ("atime_val", "-atime"),
+        ("ctime_val", "-ctime"),
+    ]
+    
+    # Visual constants
+    ERROR_BG_COLOR = '#FFEDED'  # Pale red/pink background for error box
+    ERROR_FG_COLOR = 'black'    # Explicit black foreground for text contrast
+    
     def __init__(self, master):
         self.master = master
         master.title("MyEverything: macOS Find GUI")
@@ -24,13 +53,14 @@ class MyEverythingApp:
         self.atime_val = tk.StringVar(value="")
         self.ctime_val = tk.StringVar(value="")
         
-        # Internal dictionary to store file metadata for sorting
+        # Internal dictionary to store file metadata (raw size/timestamps) for accurate sorting
         self.file_data = {}
 
         # --- Build GUI ---
         self._create_widgets()
 
     def _create_widgets(self):
+        """Builds all GUI components using the centralized COLUMN_SETUP."""
         # 1. Input Frame (Search Path and Pattern)
         input_frame = ttk.LabelFrame(self.master, text="🔍 Path and Name Filters")
         input_frame.pack(padx=10, pady=5, fill="x")
@@ -58,14 +88,14 @@ class MyEverythingApp:
         ttk.Radiobutton(options_frame, text="Directory (d)", variable=self.file_type, value="d").grid(row=0, column=2, padx=5, pady=5)
         ttk.Radiobutton(options_frame, text="Any Type", variable=self.file_type, value="").grid(row=0, column=3, padx=5, pady=5)
         
-        # Size Filter (UPDATED DESCRIPTION)
+        # Size Filter 
         size_desc = "Size (-size): +/-N[cKMG] (e.g., +10M = >10MB, -500k = <500KB)"
         ttk.Label(options_frame, text=size_desc).grid(row=1, column=0, columnspan=4, padx=5, pady=5, sticky="w")
         ttk.Entry(options_frame, textvariable=self.size_val, width=15).grid(row=1, column=4, padx=5, pady=5, sticky="w")
         
         options_frame.grid_columnconfigure(4, weight=1)
 
-        # 3. Time Filter Frame (UPDATED DESCRIPTION and structure)
+        # 3. Time Filter Frame
         time_desc = "Days: (+N = >N full days ago; -N = <N full days ago)"
         time_frame = ttk.LabelFrame(self.master, text=f"⌚ Time Filters {time_desc}")
         time_frame.pack(padx=10, pady=5, fill="x")
@@ -88,24 +118,22 @@ class MyEverythingApp:
         command_frame = ttk.LabelFrame(self.master, text="Command Status")
         command_frame.pack(padx=10, pady=5, fill="x")
         
-        # Command Status Label (Running/Ran)
         self.command_status_label = ttk.Label(command_frame, text="Ready.")
         self.command_status_label.pack(padx=5, pady=2, anchor="w")
 
-        # Command Text Box (Read-only Entry)
         self.command_output = ttk.Entry(command_frame, state='readonly', font=('Courier', 10))
         self.command_output.pack(padx=5, pady=(0, 5), fill="x")
 
-        # Error Status Label
         self.error_status_label = ttk.Label(command_frame, text="Command Errors (stderr):", foreground='red')
         self.error_status_label.pack(padx=5, pady=(5, 0), anchor="w")
         
-        # Error Text Box (Scrollable, Read-only)
         error_text_frame = ttk.Frame(command_frame)
         error_text_frame.pack(padx=5, pady=(0, 5), fill="x")
         
-        # FIX: Explicitly set foreground to black for contrast
-        self.error_output = tk.Text(error_text_frame, height=4, state='disabled', wrap='word', font=('Courier', 10), background='#FFEDED', foreground='black') 
+        # Use constants for explicit color settings
+        self.error_output = tk.Text(error_text_frame, height=4, state='disabled', wrap='word', 
+                                    font=('Courier', 10), background=self.ERROR_BG_COLOR, 
+                                    foreground=self.ERROR_FG_COLOR)
         
         error_scrollbar = ttk.Scrollbar(error_text_frame, command=self.error_output.yview)
         error_scrollbar.pack(side="right", fill="y")
@@ -120,26 +148,23 @@ class MyEverythingApp:
         results_frame = ttk.Frame(self.master)
         results_frame.pack(padx=10, pady=5, fill="both", expand=True)
 
-        # Treeview setup for columns
-        self.results_tree = ttk.Treeview(results_frame, 
-                                         columns=("Folder", "Size", "Modified", "Accessed", "Changed"), 
-                                         show="tree headings") 
+        # Build columns list from keys in COLUMN_SETUP
+        column_ids = list(self.COLUMN_SETUP.keys())[1:] # Skip "#0"
+        self.results_tree = ttk.Treeview(results_frame, columns=column_ids, show="tree headings") 
         
-        # Column Headings & Sorting 
-        self.results_tree.heading("#0", text="File Name", command=lambda: self._sort_column(self.results_tree, "#0", False))
-        self.results_tree.heading("Folder", text="Folder", command=lambda: self._sort_column(self.results_tree, "Folder", False))
-        self.results_tree.heading("Size", text="Size", command=lambda: self._sort_column(self.results_tree, "Size", False))
-        self.results_tree.heading("Modified", text="Modified Date", command=lambda: self._sort_column(self.results_tree, "Modified", False))
-        self.results_tree.heading("Accessed", text="Accessed Date", command=lambda: self._sort_column(self.results_tree, "Accessed", False))
-        self.results_tree.heading("Changed", text="Changed Date", command=lambda: self._sort_column(self.results_tree, "Changed", False))
-        
-        # Column widths
-        self.results_tree.column("#0", width=200, stretch=tk.YES, anchor='w') 
-        self.results_tree.column("Folder", width=250, stretch=tk.YES, anchor='w')
-        self.results_tree.column("Size", width=80, stretch=tk.NO, anchor='e')
-        self.results_tree.column("Modified", width=120, stretch=tk.NO, anchor='e')
-        self.results_tree.column("Accessed", width=120, stretch=tk.NO, anchor='e')
-        self.results_tree.column("Changed", width=120, stretch=tk.NO, anchor='e')
+        # Iterate over COLUMN_SETUP to configure columns and headings (Leaner setup)
+        for col_id, config in self.COLUMN_SETUP.items():
+            sort_command = lambda c=col_id: self._sort_column(self.results_tree, c, False)
+            self.results_tree.heading(col_id, text=config["text"], command=sort_command)
+            
+            # Configure column width/stretch
+            if col_id == "#0":
+                self.results_tree.column(col_id, width=config["width"], stretch=tk.YES, anchor='w')
+            elif col_id in ["Size", "Modified", "Accessed", "Changed"]:
+                self.results_tree.column(col_id, width=config["width"], stretch=tk.NO, anchor='e')
+            else:
+                self.results_tree.column(col_id, width=config["width"], stretch=tk.YES, anchor='w')
+
 
         # Scrollbars
         v_scrollbar = ttk.Scrollbar(results_frame, orient="vertical", command=self.results_tree.yview)
@@ -154,70 +179,77 @@ class MyEverythingApp:
         self.status_label = ttk.Label(self.master, text="Ready.", relief=tk.SUNKEN, anchor="w")
         self.status_label.pack(fill="x", padx=10, pady=(0, 5))
 
-
+    
+    # --- HELPER METHODS ---
+    
     def _select_path(self):
         """Opens a dialog to select the starting directory."""
         folder_selected = filedialog.askdirectory(initialdir=self.start_path.get())
         if folder_selected:
             self.start_path.set(folder_selected)
 
+    def _update_status(self, message, color='black'):
+        """Helper to update the main status bar."""
+        self.status_label.config(text=message, foreground=color)
+
+    def _log_error(self, message, is_exception=False):
+        """Helper to insert and display errors in the dedicated error box."""
+        self.error_output.config(state='normal')
+        self.error_output.delete('1.0', tk.END)
+        self.error_output.insert(tk.END, message)
+        self.error_output.see('1.0') # Scrolls to the top
+        self.error_output.config(state='disabled')
+        
+        # Force redraw to ensure visibility
+        self.master.update_idletasks() 
+        
+        status_text = "Command Errors (Python Exception) - FOUND:" if is_exception else "Command Errors (stderr) - FOUND:"
+        self.error_status_label.config(text=status_text, foreground='red')
+
     def _build_find_command(self):
-        """Constructs the full 'find' command based on GUI inputs."""
+        """Constructs the full 'find' command based on GUI inputs (EFFICIENT)."""
         
         command = [
             "find",
             self.start_path.get()
         ]
 
-        file_type_val = self.file_type.get()
-        if file_type_val:
-            command.extend(["-type", file_type_val])
-        
+        # Name/iName Filter (Special Case)
         search_arg = "-iname" if self.case_insensitive.get() else "-name"
         command.extend([search_arg, self.search_name.get()])
 
-        size_val = self.size_val.get().strip()
-        if size_val:
-            command.extend(["-size", size_val])
-            
-        # Add Time Filters (using only the first non-empty one to avoid conflicts)
-        if self.mtime_val.get().strip():
-            command.extend(["-mtime", self.mtime_val.get().strip()])
-        elif self.atime_val.get().strip():
-            command.extend(["-atime", self.atime_val.get().strip()])
-        elif self.ctime_val.get().strip():
-            command.extend(["-ctime", self.ctime_val.get().strip()])
+        # Iteratively build command using the FIND_FILTERS constant (Leaner logic)
+        for var_name, flag in self.FIND_FILTERS:
+            # Use getattr to fetch the correct StringVar instance
+            var_instance = getattr(self, var_name, None) 
+            if var_instance and var_instance.get().strip():
+                command.extend([flag, var_instance.get().strip()])
         
         command.append("-print")
         
         return command
 
     def run_find(self):
-        """Executes the constructed find command and displays output in the Treeview."""
+        """Executes the constructed find command and displays output."""
         
         self.results_tree.delete(*self.results_tree.get_children())
         self.file_data = {}
-        self.status_label.config(text="Searching...", foreground='black')
-
-        # Clear error output box at the start
-        self.error_output.config(state='normal')
-        self.error_output.delete('1.0', tk.END)
-        self.error_output.config(state='disabled')
-        self.error_status_label.config(text="Command Errors (stderr):", foreground='red') # Reset label
+        self._update_status("Searching...")
+        self._log_error("") # Clear previous errors
 
         try:
             find_command = self._build_find_command()
             quoted_command = ' '.join(shlex.quote(arg) for arg in find_command)
 
-            # 1. SET RUNNING STATUS AND DISPLAY COMMAND
+            # 1. SET RUNNING STATUS
             self.command_status_label.config(text="Running command:")
-            
             self.command_output.config(state='normal')
             self.command_output.delete(0, tk.END)
             self.command_output.insert(0, quoted_command)
             self.command_output.config(state='readonly')
             self.master.update() 
 
+            # Use os.fsdecode for robust path handling across OSes (Python 3.6+)
             process = subprocess.run(
                 find_command, 
                 capture_output=True, 
@@ -244,24 +276,28 @@ class MyEverythingApp:
                 ctime_timestamp = 0
                 
                 try:
+                    # Collect raw data for robust sorting
                     stat_info = os.stat(path)
                     size_bytes = stat_info.st_size
                     mtime_timestamp = stat_info.st_mtime
                     atime_timestamp = stat_info.st_atime
                     ctime_timestamp = stat_info.st_ctime
                 except Exception:
-                    pass
+                    # Skip files we can't stat (e.g., permission denied, broken symlink)
+                    continue
 
-                # Convert size and timestamp for display
+                # Format data for display (separate from raw data storage)
                 human_size = self._human_readable_size(size_bytes)
-                mtime_date = datetime.datetime.fromtimestamp(mtime_timestamp).strftime('%Y-%m-%d %H:%M') if mtime_timestamp else "N/A"
-                atime_date = datetime.datetime.fromtimestamp(atime_timestamp).strftime('%Y-%m-%d %H:%M') if atime_timestamp else "N/A"
-                ctime_date = datetime.datetime.fromtimestamp(ctime_timestamp).strftime('%Y-%m-%d %H:%M') if ctime_timestamp else "N/A"
+                date_format = '%Y-%m-%d %H:%M'
+                mtime_date = datetime.datetime.fromtimestamp(mtime_timestamp).strftime(date_format)
+                atime_date = datetime.datetime.fromtimestamp(atime_timestamp).strftime(date_format)
+                ctime_date = datetime.datetime.fromtimestamp(ctime_timestamp).strftime(date_format)
                 
-                # Insert into Treeview: text=name, values=(Folder, Size, Modified, Accessed, Changed)
-                item_id = self.results_tree.insert("", tk.END, text=name, values=(folder, human_size, mtime_date, atime_date, ctime_date))
+                # Insert into Treeview
+                item_id = self.results_tree.insert("", tk.END, text=name, 
+                    values=(folder, human_size, mtime_date, atime_date, ctime_date))
                 
-                # Store original data for accurate numeric sorting
+                # Store original data for accurate numeric sorting (Raw data storage)
                 self.file_data[item_id] = {
                     "Name": name, 
                     "Folder": folder, 
@@ -274,32 +310,15 @@ class MyEverythingApp:
                 count += 1
 
             if process.stderr:
-                # Display error in error box
-                self.error_output.config(state='normal')
-                self.error_output.insert(tk.END, process.stderr)
-                self.error_output.see('1.0') 
-                self.error_output.config(state='disabled')
-                
-                self.master.update_idletasks() 
-                
-                self.error_status_label.config(text="Command Errors (stderr) - FOUND:", foreground='red')
-                self.status_label.config(text=f"Completed with {count} results. NOTE: Errors occurred (see error box).", foreground='red')
+                self._log_error(process.stderr)
+                self._update_status(f"Completed with {count} results. NOTE: Errors occurred (see error box).", 'red')
             else:
-                self.status_label.config(text=f"Search complete. Found {count} results.", foreground='green')
+                self._update_status(f"Search complete. Found {count} results.", 'green')
 
         except Exception as e:
             self.command_status_label.config(text="Ran command (Error):")
-            
-            # Display Python error in error box
-            self.error_output.config(state='normal')
-            self.error_output.insert(tk.END, f"An unexpected Python error occurred:\n{e}")
-            self.error_output.see('1.0') 
-            self.error_output.config(state='disabled')
-            
-            self.master.update_idletasks()
-
-            self.error_status_label.config(text="Command Errors (Python Exception) - FOUND:", foreground='red')
-            self.status_label.config(text=f"An unexpected error occurred: {e}", foreground='red')
+            self._log_error(f"An unexpected Python error occurred:\n{e}", is_exception=True)
+            self._update_status(f"An unexpected error occurred: {e}", 'red')
 
     def _human_readable_size(self, size_bytes):
         """Converts bytes to KB, MB, or GB."""
@@ -312,27 +331,34 @@ class MyEverythingApp:
             i += 1
         return f"{size_bytes:,.2f} {units[i]}"
         
-    def _sort_column(self, tree, col, reverse):
-        """Sorts the Treeview column by the relevant stored data."""
-        if col == "#0":
-            l = [(tree.item(k, 'text').lower(), k) for k in tree.get_children('')]
-        elif col == "Size":
-            l = [(self.file_data[k]["Size_Bytes"], k) for k in tree.get_children('')]
-        elif col == "Modified":
-            l = [(self.file_data[k]["Modified_Timestamp"], k) for k in tree.get_children('')]
-        elif col == "Accessed":
-            l = [(self.file_data[k]["Accessed_Timestamp"], k) for k in tree.get_children('')]
-        elif col == "Changed":
-            l = [(self.file_data[k]["Changed_Timestamp"], k) for k in tree.get_children('')]
+    def _sort_column(self, tree, col_id, reverse):
+        """
+        Sorts the Treeview column.
+        (LEANER LOGIC: Looks up data key from COLUMN_SETUP instead of using a long if/elif chain.)
+        """
+        
+        # Retrieve the internal data key from the centralized configuration
+        data_key = self.COLUMN_SETUP.get(col_id, {}).get("data_key")
+
+        if data_key in ["Size_Bytes", "Modified_Timestamp", "Accessed_Timestamp", "Changed_Timestamp"]:
+            # Numeric/Timestamp sort: use the raw data stored in self.file_data
+            l = [(self.file_data[k][data_key], k) for k in tree.get_children('')]
         else:
-            l = [(tree.set(k, col).lower(), k) for k in tree.get_children('')]
+            # String sort (Name/Folder): use the data stored directly in the Treeview item (or stored Name/Folder)
+            if col_id == "#0":
+                l = [(self.file_data[k]["Name"].lower(), k) for k in tree.get_children('')]
+            else:
+                 l = [(self.file_data[k]["Folder"].lower(), k) for k in tree.get_children('')]
+
 
         l.sort(reverse=reverse)
 
+        # Rearrange items in the Treeview
         for index, (val, k) in enumerate(l):
             tree.move(k, '', index)
 
-        tree.heading(col, command=lambda: self._sort_column(tree, col, not reverse))
+        # Reverse sort direction for next click
+        tree.heading(col_id, command=lambda: self._sort_column(tree, col_id, not reverse))
 
 
 if __name__ == "__main__":
