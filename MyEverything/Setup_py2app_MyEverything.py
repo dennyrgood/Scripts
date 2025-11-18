@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 """
 Setup script for creating a macOS application bundle using py2app.
 
@@ -16,7 +15,7 @@ DATA_FILES = []
 OPTIONS = {
     'argv_emulation': False,
     'packages': ['tkinter'],
-    'iconfile': 'app_icon.icns',  # Optional: Add your custom icon file
+    # 'iconfile': 'app_icon.icns',  # Optional: Uncomment if you have an icon file
     'plist': {
         'CFBundleName': 'MyEverything',
         'CFBundleDisplayName': 'MyEverything',
