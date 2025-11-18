@@ -37,7 +37,8 @@ class MyEverythingApp:
     def __init__(self, master):
         self.master = master
         master.title("MyEverything: macOS Find GUI")
-        master.geometry("1000x750")
+        # ADJUSTMENT: Increased height for better visibility of results and error box
+        master.geometry("1000x950")
 
         # --- Variables (Base) ---
         self.search_name = tk.StringVar(value="*")
@@ -50,7 +51,7 @@ class MyEverythingApp:
         self.mtime_val = tk.StringVar(value="")
         self.atime_val = tk.StringVar(value="")
         self.ctime_val = tk.StringVar(value="")
-        self.other_args = tk.StringVar(value="") # NEW: Variable for manual custom args
+        self.other_args = tk.StringVar(value="") 
         
         # Internal dictionary to store file metadata (raw size/timestamps) for accurate sorting
         self.file_data = {}
@@ -63,7 +64,7 @@ class MyEverythingApp:
         
         # --- Configure Style for Taller Status Bar ---
         style = ttk.Style()
-        # Increased vertical padding (10px top/bottom) for better status bar visibility
+        # Increased vertical padding for better status bar visibility
         style.configure('Taller.TLabel', padding=(5, 10, 5, 10)) 
 
         # 1. Input Frame (Search Path and Pattern)
@@ -83,7 +84,7 @@ class MyEverythingApp:
 
         input_frame.grid_columnconfigure(1, weight=1)
 
-        # 2. Consolidated Filters Frame (NEW: Groups Type, Size, Time, Permissions, and Actions)
+        # 2. Consolidated Filters Frame
         filters_frame = ttk.LabelFrame(self.master, text="⚙️ Filters (Type, Size, Time, Permissions, Actions)")
         filters_frame.pack(padx=10, pady=5, fill="x")
         
@@ -94,34 +95,45 @@ class MyEverythingApp:
         ttk.Radiobutton(filters_frame, text="Any Type", variable=self.file_type, value="").grid(row=0, column=3, padx=5, pady=5)
         
         # Row 1: Size Filter (-size)
-        size_desc = "Size (-size): +/-N[cKMG]"
-        ttk.Label(filters_frame, text=size_desc).grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        ttk.Entry(filters_frame, textvariable=self.size_val, width=15).grid(row=1, column=1, padx=5, pady=5, sticky="ew", columnspan=5)
+        size_desc_text = "Size (-size):"
+        ttk.Label(filters_frame, text=size_desc_text).grid(row=1, column=0, padx=5, pady=5, sticky="w")
         
-        # Row 2: Time Filters (-mtime, -atime, -ctime)
-        ttk.Label(filters_frame, text="Days:").grid(row=2, column=0, padx=5, pady=(10, 5), sticky="w", columnspan=6)
+        # ADJUSTMENT: Reduced width of size input box
+        ttk.Entry(filters_frame, textvariable=self.size_val, width=8).grid(row=1, column=1, padx=5, pady=5, sticky="w") 
         
-        ttk.Label(filters_frame, text="Modified (-mtime):").grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        # ADJUSTMENT: Added description text back next to the size input
+        size_desc_info = "+/-N[cKMG] (e.g., +10M = >10MB, -500k = <500KB)"
+        ttk.Label(filters_frame, text=size_desc_info).grid(row=1, column=2, columnspan=5, padx=5, pady=5, sticky="w") 
+
+        # Row 3: Time Filters (-mtime, -atime, -ctime) 
+        # REMOVED: Previous "Days:" label in row 2
+        
+        ttk.Label(filters_frame, text="Modified (-mtime):").grid(row=3, column=0, padx=5, pady=(10, 5), sticky="w")
         ttk.Entry(filters_frame, textvariable=self.mtime_val, width=5).grid(row=3, column=1, padx=5, sticky="w")
 
-        ttk.Label(filters_frame, text="Accessed (-atime):").grid(row=3, column=2, padx=(20, 5), pady=5, sticky="w")
+        ttk.Label(filters_frame, text="Accessed (-atime):").grid(row=3, column=2, padx=(20, 5), pady=(10, 5), sticky="w")
         ttk.Entry(filters_frame, textvariable=self.atime_val, width=5).grid(row=3, column=3, padx=5, sticky="w")
         
-        ttk.Label(filters_frame, text="Changed (-ctime):").grid(row=3, column=4, padx=(20, 5), pady=5, sticky="w")
-        ttk.Entry(filters_frame, textvariable=self.ctime_val, width=5).grid(row=3, column=5, padx=5, sticky="w")
+        ttk.Label(filters_frame, text="Changed (-ctime):").grid(row=3, column=4, padx=(20, 5), pady=(10, 5), sticky="w")
+        ttk.Entry(filters_frame, textvariable=self.ctime_val, width=5).grid(row=3, column=5, padx=5, sticky="w") 
         
-        # Row 4/5/6: Other Arguments (NEW FEATURE)
-        ttk.Label(filters_frame, text="Other Arguments (Advanced):").grid(row=4, column=0, columnspan=6, padx=5, pady=(10, 0), sticky="w")
+        # ADJUSTMENT: Added "Days" after the last time input box (Changed)
+        ttk.Label(filters_frame, text="Days").grid(row=3, column=6, padx=(5, 5), pady=(10, 5), sticky="w")
+
+        # Row 4/5/6: Other Arguments (Need to span 7 columns now: 0-6)
+        ttk.Label(filters_frame, text="Other Arguments (Advanced):").grid(row=4, column=0, columnspan=7, padx=5, pady=(10, 0), sticky="w")
         
         other_entry = ttk.Entry(filters_frame, textvariable=self.other_args)
-        other_entry.grid(row=5, column=0, columnspan=6, padx=5, pady=(0, 5), sticky="ew")
+        other_entry.grid(row=5, column=0, columnspan=7, padx=5, pady=(0, 5), sticky="ew") # columnspan=7
 
         # Examples Label
         examples = "e.g., -perm 644 -user root -delete -exec 'mv {} {}.bak' \\;"
-        ttk.Label(filters_frame, text=examples, font=('Courier', 8)).grid(row=6, column=0, columnspan=6, padx=5, pady=(0, 5), sticky="w")
+        ttk.Label(filters_frame, text=examples, font=('Courier', 8)).grid(row=6, column=0, columnspan=7, padx=5, pady=(0, 5), sticky="w") # columnspan=7
         
-        filters_frame.grid_columnconfigure(5, weight=1) # Makes the last column expandable
-        
+        # Update column weight to the new last column (6)
+        filters_frame.grid_columnconfigure(6, weight=1) 
+        filters_frame.grid_columnconfigure(5, weight=0) # Ensure old column 5 is not weighted
+
         # 3. Execute Button
         ttk.Button(self.master, text="▶️ Run Find Command", command=self.run_find).pack(pady=5, padx=10, fill="x")
 
@@ -219,7 +231,7 @@ class MyEverythingApp:
         self.error_status_label.config(text=status_text, foreground='red')
 
     def _build_find_command(self):
-        """Constructs the full 'find' command based on GUI inputs (EFFICIENT)."""
+        """Constructs the full 'find' command based on GUI inputs."""
         
         command = [
             "find",
@@ -236,19 +248,18 @@ class MyEverythingApp:
             if var_instance and var_instance.get().strip():
                 command.extend([flag, var_instance.get().strip()])
 
-        # NEW FEATURE: Append any manually specified arguments
+        # Append any manually specified arguments
         other_args_val = self.other_args.get().strip()
         if other_args_val:
             try:
-                # Use shlex.split for robust parsing of complex arguments like -exec 'mv {} {}.bak' \;
+                # Use shlex.split for robust parsing of complex arguments
                 extra_args = shlex.split(other_args_val)
                 command.extend(extra_args)
             except ValueError:
-                # Fallback to simple split if shlex fails, though this is less safe for shell syntax
                 self._log_error("Warning: shlex failed to parse 'Other Arguments'. Using simple split.", is_exception=False)
                 command.extend(other_args_val.split())
         
-        # Append -print (The 'find' command will ignore this if an action like -delete or -exec is already present)
+        # Append -print 
         command.append("-print")
         
         return command
@@ -256,7 +267,6 @@ class MyEverythingApp:
     def _open_folder_in_finder(self, event):
         """
         Executes 'open -R <path>' to reveal the selected file or directory in macOS Finder.
-        This method is bound to the double-click event on the results tree.
         """
         item_id = self.results_tree.focus()
         if not item_id:
@@ -269,10 +279,8 @@ class MyEverythingApp:
         full_path = os.path.join(data.get("Folder"), data.get("Name"))
         
         try:
-            # -R flag reveals the file/folder in Finder, highlighting the item.
             subprocess.run(['open', '-R', full_path], check=False)
         except Exception as e:
-            # Note: This error only shows in the console, not the GUI error box
             print(f"Error opening item in Finder: {e}")
 
 
@@ -352,7 +360,6 @@ class MyEverythingApp:
                 self._log_error(process.stderr)
                 self._update_status(f"Completed with {count} results. NOTE: Errors occurred (see error box).", 'red')
             elif count == 0:
-                # NEW FEATURE: Clear status for zero results
                 self._update_status("Search complete. NO RESULTS FOUND.", 'orange') 
             else:
                 self._update_status(f"Search complete. Found {count} results.", 'green')
