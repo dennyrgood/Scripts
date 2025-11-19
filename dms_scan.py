@@ -110,19 +110,35 @@ def scan_doc_directory(doc_dir: Path, md_dir: Path) -> Dict[str, Path]:
 
 def categorize_changes(
     current_files: Dict[str, Path],
-    state: dict
+    state: dict,
+    doc_dir: Path
 ) -> Tuple[List[dict], List[dict], List[str]]:
     """
     Compare current files against state.
     Returns: (new_files, changed_files, missing_files)
+    
+    ISSUE 1 FIX: Excludes original images/docx if their .txt twins exist in md_outputs/
     """
     processed = state.get("processed_files", {})
     
     new_files = []
     changed_files = []
     
+    # Image/binary extensions that get converted to text
+    convertible_exts = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.docx', '.doc'}
+    
     for rel_path, abs_path in current_files.items():
         file_hash = compute_file_hash(abs_path)
+        
+        # ISSUE 1 FIX: Check if this is a convertible file with an existing text twin
+        if abs_path.suffix.lower() in convertible_exts:
+            # Check for twin in md_outputs/
+            twin_name = f"{abs_path.name}.txt"
+            twin_path = doc_dir / "md_outputs" / twin_name
+            
+            if twin_path.exists():
+                # Skip this original file - the text twin will be processed instead
+                continue
         
         if rel_path not in processed:
             # New file
@@ -196,7 +212,7 @@ def main():
     print()
     
     # Compare
-    new_files, changed_files, missing_files = categorize_changes(current_files, state)
+    new_files, changed_files, missing_files = categorize_changes(current_files, state, doc_dir)
     
     # Report
     print("Scan Results:")

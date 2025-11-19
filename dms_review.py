@@ -16,9 +16,27 @@ import json
 from pathlib import Path
 
 def show_file_preview(file_info: dict, num_lines: int = 10) -> None:
-    """Show first few lines of file for context"""
+    """
+    Show first few lines of file for context
+    
+    ISSUE 2 FIX: Skip preview for images and generated text files from md_outputs/
+    """
+    path = Path(file_info['abs_path'])
+    
+    # Skip images
+    image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff'}
+    if path.suffix.lower() in image_exts:
+        print("  [Image file - preview skipped]")
+        return
+    
+    # Skip generated text files from image processing (in md_outputs/)
+    if 'md_outputs' in str(path):
+        # Check if this is a converted file (e.g., image.png.txt)
+        if '.txt' in path.name and any(ext in path.name for ext in ['.png', '.jpg', '.jpeg', '.gif', '.docx']):
+            print("  [Generated text from conversion - preview skipped]")
+            return
+    
     try:
-        path = Path(file_info['abs_path'])
         with path.open('r', encoding='utf-8', errors='replace') as f:
             lines = []
             for _ in range(num_lines):
@@ -27,11 +45,12 @@ def show_file_preview(file_info: dict, num_lines: int = 10) -> None:
                     break
                 lines.append(line.rstrip())
         
-        print("  File preview:")
-        print("  " + "-"*60)
-        for line in lines:
-            print(f"  {line[:80]}")
-        print("  " + "-"*60)
+        if lines:
+            print("  File preview:")
+            print("  " + "-"*60)
+            for line in lines:
+                print(f"  {line[:80]}")
+            print("  " + "-"*60)
     except Exception as e:
         print(f"  [Cannot preview file: {e}]")
 

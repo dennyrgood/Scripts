@@ -47,7 +47,11 @@ def extract_dms_state(index_path: Path) -> dict:
         return {"processed_files": {}, "categories": [], "last_scan": None}
 
 def update_dms_state(index_path: Path, new_state: dict) -> str:
-    """Update DMS_STATE in index.html content"""
+    """
+    Update DMS_STATE in index.html content
+    
+    ISSUE 3 FIX: Use lambda to avoid re.sub interpreting backslashes as escape sequences
+    """
     content = index_path.read_text(encoding='utf-8', errors='replace')
     
     state_json = json.dumps(new_state, indent=2)
@@ -57,7 +61,8 @@ def update_dms_state(index_path: Path, new_state: dict) -> str:
     state_pattern = re.compile(r'<!-- DMS_STATE\n.*?\n-->', re.DOTALL)
     
     if state_pattern.search(content):
-        content = state_pattern.sub(new_state_block, content)
+        # ISSUE 3 FIX: Use lambda to treat new_state_block as literal string
+        content = state_pattern.sub(lambda m: new_state_block, content)
     else:
         # Insert after <body>
         body_pos = content.find('<body>')
