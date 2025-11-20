@@ -236,8 +236,18 @@ def main():
         print(f"  1. Run: dms summarize (to generate summaries for new files)")
     print(f"  2. Run: dms review (to approve changes)")
     print(f"  3. Run: dms apply (to update index.html)")
+    
     if missing_files:
-        print(f"\n  Or run: dms cleanup (to remove missing files from state)")
+        print(f"\n⚠️  MISSING FILES DETECTED:")
+        print(f"  The following files are in the index but no longer exist on disk:")
+        for f in missing_files:
+            print(f"    • {f['path']} (was in {f['was_category']})")
+        print(f"\n  To remove these from the index:")
+        print(f"    Run: dms cleanup")
+        print(f"\n  This will:")
+        print(f"    1. Remove missing files from .dms_state.json")
+        print(f"    2. Regenerate index.html without those entries")
+        print(f"\n  Note: You can run cleanup at any time (before or after applying new changes)")
     
     return 0
 
