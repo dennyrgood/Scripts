@@ -17,7 +17,6 @@ Usage (from repo root):
   dms review            # Interactive approval
   dms apply             # Write approved changes to .dms_state.json
   dms cleanup           # Remove deleted files from state
-  dms orphans           # Remove orphaned entries from state
   dms render            # Regenerate index.html from .dms_state.json
   dms auto              # Run full workflow (scan → image-to-text → summarize → review → apply)
   dms init              # Create new index.html for a fresh Doc/ directory
@@ -115,12 +114,7 @@ def cmd_apply(args, scripts_dir: Path, config: dict):
 def cmd_cleanup(args, scripts_dir: Path, config: dict):
     """Remove deleted files from index.html"""
     print("==> Cleaning up deleted files...")
-    return run_dms_script("dms_util/dms_cleanup.py", ["--doc", "Doc", "--index", "Doc/index.html"], scripts_dir)
-
-def cmd_orphans(args, scripts_dir: Path, config: dict):
-    """Remove orphaned entries from DMS_STATE"""
-    print("==> Removing orphaned entries...")
-    return run_dms_script("dms_util/dms_delete_orphans.py", ["--index", "Doc/index.html"], scripts_dir)
+    return run_dms_script("dms_util/dms_cleanup.py", ["--doc", "Doc"], scripts_dir)
 
 def cmd_render(args, scripts_dir: Path, config: dict):
     """Regenerate index.html from .dms_state.json"""
@@ -194,9 +188,6 @@ def main():
     # cleanup
     subparsers.add_parser("cleanup", help="Remove deleted files from index.html")
     
-    # orphans
-    subparsers.add_parser("orphans", help="Remove orphaned entries from DMS_STATE")
-    
     # render
     subparsers.add_parser("render", help="Regenerate index.html from .dms_state.json")
     
@@ -246,7 +237,6 @@ def main():
         "review": cmd_review,
         "apply": cmd_apply,
         "cleanup": cmd_cleanup,
-        "orphans": cmd_orphans,
         "render": cmd_render,
         "auto": cmd_auto,
         "init": cmd_init,

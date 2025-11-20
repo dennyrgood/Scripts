@@ -1,188 +1,119 @@
 #!/usr/bin/env python3
 """
-dms_image_to_text.py - Convert image files to text descriptions
+dms_image_to_text.py - Convert images to text descriptions
 
-Uses pytesseract for OCR to extract text from images.
-Saves results as .txt files in md_outputs/ parallel to PDF→MD pattern.
+Reads .dms_scan.json to find images in new files.
+Converts images (PNG, JPG) to text via OCR.
+Outputs text files to md_outputs/ for later summarization.
 
-For example:
-  Doc/diagram.png → Doc/md_outputs/diagram.png.txt
+Does NOT update any state files - just produces intermediate text files.
 """
-from __future__ import annotations
 import argparse
 import sys
 import json
+import subprocess
 from pathlib import Path
-from datetime import datetime
 
-def check_dependencies():
-    """Check if pytesseract is available"""
-    try:
-        import pytesseract
-        from PIL import Image
-        return True
-    except ImportError as e:
-        print("ERROR: Required dependencies not found.", file=sys.stderr)
-        print(f"  {e}", file=sys.stderr)
-        print("\nInstall dependencies:", file=sys.stderr)
-        print("  pip install pytesseract pillow", file=sys.stderr)
-        print("  brew install tesseract", file=sys.stderr)
-        return False
-
-def extract_text_from_image(image_path: Path) -> str:
-    """Use pytesseract to extract text from image"""
-    import pytesseract
-    from PIL import Image
+def load_scan_results(scan_path: Path) -> dict:
+    """Load .dms_scan.json to see what changed"""
+    if not scan_path.exists():
+        print(f"No scan results found at {scan_path}")
+        return {"new_files": [], "changed_files": []}
     
-    try:
-        img = Image.open(image_path)
-        text = pytesseract.image_to_string(img)
-        return text.strip()
-    except Exception as e:
-        print(f"WARNING: Failed to extract text from {image_path}: {e}", file=sys.stderr)
-        return f"[OCR failed: {e}]"
+    return json.loads(scan_path.read_text(encoding='utf-8'))
 
-def convert_docx_to_text(docx_path: Path) -> str:
-    """Use pandoc to convert DOCX to plain text"""
-    import subprocess
+def find_images_in_files(files: list, doc_dir: Path) -> list:
+    """Find image files in the list"""
+    image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}
+    images = []
+    
+    for file_info in files:
+        file_path = file_info.get('path', '')
+        ext = Path(file_path).suffix.lower()
+        if ext in image_exts:
+            images.append(file_path)
+    
+    return images
+
+def convert_image_to_text(image_path: str, doc_dir: Path, md_dir: Path) -> bool:
+    """Convert image to text using tesseract or similar"""
+    
+    full_path = doc_dir / image_path.lstrip('./')
+    
+    if not full_path.exists():
+        print(f"  ⚠ Image not found: {image_path}")
+        return False
+    
+    # Create output filename
+    output_filename = f"{Path(image_path).stem}.txt"
+    output_path = md_dir / output_filename
+    
+    # Try to use tesseract for OCR
     try:
         result = subprocess.run(
-            ['pandoc', '-f', 'docx', '-t', 'plain', str(docx_path)],
+            ["tesseract", str(full_path), str(output_path).replace('.txt', '')],
             capture_output=True,
-            text=True,
             timeout=30
         )
-        if result.returncode == 0:
-            return result.stdout.strip()
+        
+        if result.returncode == 0 and output_path.exists():
+            print(f"  ✓ {image_path}")
+            return True
         else:
-            return f"[Pandoc conversion failed: {result.stderr}]"
+            print(f"  ✗ Failed to convert: {image_path}")
+            return False
     except FileNotFoundError:
-        return "[Pandoc not found - install with: brew install pandoc]"
+        print(f"  ⚠ tesseract not installed, skipping: {image_path}")
+        return False
     except Exception as e:
-        return f"[DOCX conversion error: {e}]"
-
-def process_images(doc_dir: Path, md_dir: Path, pending_report: dict) -> int:
-    """Process all images and DOCX files in the pending report"""
-    md_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Get new files from pending report
-    new_files = pending_report.get("new_files", [])
-    image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff'}
-    docx_exts = {'.docx', '.doc'}
-    
-    # Check if text versions already exist
-    files_to_process = []
-    for f in new_files:
-        if f['ext'] in image_exts or f['ext'] in docx_exts:
-            # Check if .txt already exists in md_outputs
-            source_name = Path(f['abs_path']).name
-            txt_name = f"{source_name}.txt"
-            txt_path = md_dir / txt_name
-            
-            if txt_path.exists():
-                print(f"Skipping {source_name} - text file already exists: {txt_path}")
-                # Add existing txt to pending report
-                new_files.append({
-                    "path": f"./md_outputs/{txt_name}",
-                    "abs_path": str(txt_path),
-                    "hash": "",
-                    "size": txt_path.stat().st_size,
-                    "ext": ".txt",
-                    "source_file": f['path']
-                })
-            else:
-                files_to_process.append(f)
-    
-    if not files_to_process:
-        print("No new image/DOCX files to process (or text files already exist).")
-        return 0
-    
-    print(f"Processing {len(files_to_process)} file(s)...\n")
-    
-    processed = []
-    for file_info in files_to_process:
-        file_path = Path(file_info['abs_path'])
-        print(f"Processing: {file_path.name}")
-        
-        # Determine processing method
-        if file_info['ext'] in {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff'}:
-            # Extract text via OCR
-            text = extract_text_from_image(file_path)
-            header = f"# {file_path.stem}\n\n"
-            header += f"Source: {file_path.name} (OCR extracted)\n"
-            header += f"Extracted: {datetime.now().isoformat()}\n\n"
-            header += "---\n\n"
-        
-        elif file_info['ext'] in {'.docx', '.doc'}:
-            # Convert DOCX via pandoc
-            text = convert_docx_to_text(file_path)
-            header = f"# {file_path.stem}\n\n"
-            header += f"Source: {file_path.name} (converted from DOCX)\n"
-            header += f"Converted: {datetime.now().isoformat()}\n\n"
-            header += "---\n\n"
-        else:
-            print(f"  Skipping unsupported file type: {file_info['ext']}")
-            continue
-        
-        # Save to md_outputs/
-        output_name = f"{file_path.name}.txt"
-        output_path = md_dir / output_name
-        
-        output_path.write_text(header + text, encoding='utf-8')
-        print(f"  → Saved to: {output_path}")
-        
-        # Update pending report to include the text file
-        new_text_file = {
-            "path": f"./md_outputs/{output_name}",
-            "abs_path": str(output_path),
-            "hash": "",  # Will be computed in next scan
-            "size": output_path.stat().st_size,
-            "ext": ".txt",
-            "source_file": file_info['path']
-        }
-        processed.append(new_text_file)
-    
-    print(f"\n✓ Processed {len(processed)} image(s)")
-    
-    # Update pending report to include new text files
-    pending_report['new_files'].extend(processed)
-    pending_report['image_processing_done'] = True
-    
-    return 0
+        print(f"  ✗ Error converting {image_path}: {e}")
+        return False
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert images to text using OCR")
+    parser = argparse.ArgumentParser(description="Convert images to text")
     parser.add_argument("--doc", default="Doc", help="Doc directory")
-    parser.add_argument("--md", default="Doc/md_outputs", help="Output directory for text files")
+    parser.add_argument("--md", default="Doc/md_outputs", help="Output directory for markdown/text")
     args = parser.parse_args()
-    
-    if not check_dependencies():
-        print("\nCannot proceed without dependencies.", file=sys.stderr)
-        choice = input("Skip image processing? [y/N]: ").strip().lower()
-        if choice == 'y':
-            print("Skipping image processing.")
-            return 0
-        return 1
     
     doc_dir = Path(args.doc)
     md_dir = Path(args.md)
+    scan_path = doc_dir / ".dms_scan.json"
     
-    # Load pending report from scan
-    pending_path = doc_dir / ".dms_pending.json"
-    if not pending_path.exists():
-        print("ERROR: No pending scan report found.", file=sys.stderr)
-        print("Run 'dms scan' first.", file=sys.stderr)
+    if not doc_dir.exists():
+        print(f"ERROR: {doc_dir} not found")
         return 1
     
-    pending_report = json.loads(pending_path.read_text(encoding='utf-8'))
+    # Create output directory
+    md_dir.mkdir(parents=True, exist_ok=True)
     
-    # Process images
-    rc = process_images(doc_dir, md_dir, pending_report)
+    # Load scan results
+    scan_results = load_scan_results(scan_path)
     
-    # Save updated report
-    pending_path.write_text(json.dumps(pending_report, indent=2), encoding='utf-8')
+    # Find images in new and changed files
+    new_images = find_images_in_files(scan_results.get('new_files', []), doc_dir)
+    changed_images = find_images_in_files(scan_results.get('changed_files', []), doc_dir)
     
-    return rc
+    all_images = new_images + changed_images
+    
+    if not all_images:
+        print("No images found in new/changed files.")
+        return 0
+    
+    print(f"==> Converting {len(all_images)} image(s) to text...\n")
+    
+    converted = 0
+    for image_path in all_images:
+        if convert_image_to_text(image_path, doc_dir, md_dir):
+            converted += 1
+    
+    print(f"\n✓ Converted {converted}/{len(all_images)} image(s)")
+    
+    if converted > 0:
+        print(f"\nOutput files in {md_dir}/")
+        print(f"\nNext step:")
+        print(f"  Run: dms summarize")
+    
+    return 0
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit(main())

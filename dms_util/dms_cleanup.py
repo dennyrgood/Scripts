@@ -1,109 +1,79 @@
 #!/usr/bin/env python3
 """
-dms_cleanup.py - Remove deleted files from index.html
+dms_cleanup.py - Remove deleted files from .dms_state.json
 
-Finds files that are in DMS_STATE but no longer exist in Doc/,
-and removes them from both the HTML display and the state.
+If a file is in .dms_state.json but deleted from the filesystem,
+this removes it from the state.
 
-Usage:
-  python3 dms_cleanup.py --doc Doc/ --index Doc/index.html
+Then regenerates index.html.
 """
 import argparse
+import sys
 import json
-import re
-import shutil
+import subprocess
 from pathlib import Path
-from datetime import datetime
-
-def cleanup_deleted_files(doc_dir: Path, index_path: Path):
-    """Remove index entries for files that no longer exist in Doc/."""
-    
-    # Get list of actual files in Doc/
-    doc_files = set()
-    for item in doc_dir.rglob('*'):
-        if item.is_file():
-            # Store relative path
-            rel_path = './' + str(item.relative_to(doc_dir))
-            doc_files.add(rel_path)
-    
-    # Extract DMS_STATE
-    content = index_path.read_text(encoding='utf-8')
-    state_match = re.search(r'<!-- DMS_STATE\n(.*?)\n-->', content, re.DOTALL)
-    if not state_match:
-        print("ERROR: DMS_STATE not found")
-        return 1
-    
-    state_text = state_match.group(1).strip()
-    state = json.loads(state_text)
-    state_files = set(state.get('processed_files', {}).keys())
-    
-    # Find deleted files: in STATE but not in Doc/
-    deleted_files = state_files - doc_files
-    
-    if not deleted_files:
-        print("✓ No deleted files found. Index is in sync with Doc/.")
-        return 0
-    
-    print(f"Found {len(deleted_files)} file(s) that no longer exist in Doc/:")
-    
-    # Remove from state
-    removed = 0
-    for file_path in sorted(deleted_files):
-        if file_path in state['processed_files']:
-            del state['processed_files'][file_path]
-            removed += 1
-            print(f"  - {file_path}")
-    
-    # Remove from HTML display (remove <li> entries with data-path)
-    updated = content
-    for file_path in deleted_files:
-        escaped = re.escape(file_path)
-        pattern = rf'<li\s+class="file"[^>]*data-path="{escaped}"[^>]*>.*?</li>'
-        updated = re.sub(pattern, '', updated, flags=re.DOTALL)
-    
-    # Remove empty category sections
-    pattern = r'<section\s+class="category"[^>]*>.*?<ul\s+class="files"[^>]*>\s*</ul>\s*</section>'
-    while re.search(pattern, updated, re.DOTALL | re.IGNORECASE):
-        updated = re.sub(pattern, '', updated, count=1, flags=re.DOTALL | re.IGNORECASE)
-    
-    # Update DMS_STATE
-    new_state_json = json.dumps(state, indent=2)
-    old_state_block = state_match.group(0)
-    new_state_block = f"<!-- DMS_STATE\n{new_state_json}\n-->"
-    updated = updated.replace(old_state_block, new_state_block)
-    
-    # Backup and save
-    backup = index_path.parent / f"{index_path.name}.bak.cleanup.{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    shutil.copy2(index_path, backup)
-    index_path.write_text(updated, encoding='utf-8')
-    
-    print(f"\n✓ Removed {removed} deleted file(s) from index.html")
-    print(f"Backup: {backup}")
-    
-    return 0
-
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Remove deleted files from index.html"
-    )
-    parser.add_argument("--doc", default="Doc", help="Path to Doc directory (default: Doc)")
-    parser.add_argument("--index", default="Doc/index.html", help="Path to index.html (default: Doc/index.html)")
+    parser = argparse.ArgumentParser(description="Remove deleted files from DMS state")
+    parser.add_argument("--doc", default="Doc", help="Doc directory")
     args = parser.parse_args()
     
     doc_dir = Path(args.doc)
-    index_path = Path(args.index)
+    state_path = doc_dir / ".dms_state.json"
     
     if not doc_dir.exists():
         print(f"ERROR: {doc_dir} not found")
         return 1
     
-    if not index_path.exists():
-        print(f"ERROR: {index_path} not found")
+    if not state_path.exists():
+        print(f"No state file found at {state_path}")
+        return 0
+    
+    # Load state
+    state = json.loads(state_path.read_text(encoding='utf-8'))
+    
+    # Find files that are in state but not on disk
+    missing_files = []
+    for file_path in list(state['documents'].keys()):
+        full_path = doc_dir / file_path.lstrip('./')
+        if not full_path.exists():
+            missing_files.append(file_path)
+    
+    if not missing_files:
+        print("✓ No deleted files to clean up.")
+        return 0
+    
+    print(f"==> Removing {len(missing_files)} deleted file(s) from state...\n")
+    
+    for file_path in missing_files:
+        category = state['documents'][file_path].get('category', 'Unknown')
+        print(f"  - {Path(file_path).name} (was in {category})")
+        del state['documents'][file_path]
+    
+    # Save updated state
+    state_path.write_text(json.dumps(state, indent=2), encoding='utf-8')
+    print(f"\n✓ Updated {state_path}")
+    
+    # Regenerate index.html
+    print(f"\n==> Regenerating index.html...\n")
+    
+    scripts_dir = Path(__file__).parent.parent.parent
+    render_script = scripts_dir / "dms_util" / "dms_render.py"
+    
+    result = subprocess.run(
+        [sys.executable, str(render_script),
+         "--doc", str(doc_dir),
+         "--index", str(doc_dir / "index.html")],
+        capture_output=False
+    )
+    
+    if result.returncode == 0:
+        print(f"\n✓ Cleanup complete!")
+    else:
+        print(f"ERROR: Failed to render index.html", file=sys.stderr)
         return 1
     
-    return cleanup_deleted_files(doc_dir, index_path)
-
+    return 0
 
 if __name__ == "__main__":
     exit(main())

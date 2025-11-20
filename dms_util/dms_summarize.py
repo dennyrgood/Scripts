@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-dms_summarize.py - Generate AI summaries and category suggestions via Ollama
+dms_summarize.py - Generate AI summaries for new/changed files
 
-Uses Ollama API to generate:
-  - Brief technical summary (<50 words)
-  - Suggested category (existing or new)
+Reads .dms_scan.json to find new/changed files.
+Generates summaries via Ollama.
+Outputs: .dms_pending_summaries.json (awaiting user approval)
 
-Considers filename in the prompt for context.
+Does NOT update .dms_state.json (that happens in apply).
 """
-from __future__ import annotations
 import argparse
 import sys
 import json
@@ -18,7 +17,6 @@ from datetime import datetime
 
 def load_config() -> dict:
     """Load DMS config"""
-    # Config is in Scripts root, not in dms_util/
     config_path = Path(__file__).parent.parent / "dms_config.json"
     if not config_path.exists():
         return {
@@ -29,304 +27,165 @@ def load_config() -> dict:
         }
     return json.loads(config_path.read_text(encoding='utf-8'))
 
-def check_ollama(host: str, model: str) -> bool:
-    """Check if Ollama is running and model is available"""
-    try:
-        # Check server
-        resp = requests.get(f"{host}/api/tags", timeout=5)
-        if resp.status_code != 200:
-            print(f"ERROR: Ollama server not responding at {host}", file=sys.stderr)
-            return False
-        
-        # Check if model exists
-        models = resp.json().get('models', [])
-        model_names = [m['name'] for m in models]
-        
-        if model not in model_names:
-            print(f"ERROR: Model '{model}' not found in Ollama", file=sys.stderr)
-            print(f"Available models: {', '.join(model_names)}", file=sys.stderr)
-            print(f"\nPull the model with: ollama pull {model}", file=sys.stderr)
-            return False
-        
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"ERROR: Cannot connect to Ollama at {host}: {e}", file=sys.stderr)
-        print("Make sure Ollama is running (ollama serve)", file=sys.stderr)
-        return False
+def load_scan_results(scan_path: Path) -> dict:
+    """Load .dms_scan.json"""
+    if not scan_path.exists():
+        return {"new_files": [], "changed_files": []}
+    return json.loads(scan_path.read_text(encoding='utf-8'))
 
-def read_file_content(file_path: Path, max_chars: int = 4000) -> str:
-    """Read file content, truncate if too large"""
+def read_file_content(file_path: Path) -> str:
+    """Read file content safely"""
     try:
-        content = file_path.read_text(encoding='utf-8', errors='replace')
-        if len(content) > max_chars:
-            content = content[:max_chars] + "\n\n[... truncated ...]"
-        return content
+        if file_path.suffix in {'.txt', '.md', '.html', '.py', '.js', '.json'}:
+            return file_path.read_text(encoding='utf-8', errors='replace')[:2000]  # First 2000 chars
+        return f"[Binary file: {file_path.name}]"
     except Exception as e:
         return f"[Error reading file: {e}]"
 
-def generate_summary_and_category(
-    file_info: dict,
-    doc_dir: Path,
-    existing_categories: list[str],
-    config: dict,
-    retry_count: int = 0,
-    max_retries: int = 3
-) -> dict:
-    """Call Ollama to generate summary and suggest category (with retries)"""
-    
-    file_path = Path(file_info['abs_path'])
-    file_name = file_path.name
-    file_ext = file_info['ext']
-    
-    # Read content
-    content = read_file_content(file_path, max_chars=4000)
-    
-    # Build prompt
-    categories_str = ", ".join(existing_categories)
-    
-    prompt = f"""Analyze this document and provide a summary and category assignment.
+def check_ollama(host: str, model: str) -> bool:
+    """Check if Ollama is running and model available"""
+    try:
+        resp = requests.get(f"{host}/api/tags", timeout=5)
+        if resp.status_code != 200:
+            return False
+        tags = resp.json().get('models', [])
+        return any(model in t.get('name', '') for t in tags)
+    except:
+        return False
 
-Filename: {file_name}
-
-Document content:
-{content}
-
-Task:
-1. Write a brief technical summary (1-2 sentences, max 50 words) describing what this document contains and its purpose.
-2. Choose the BEST category from this list: {categories_str}
-   - Only propose a NEW category if none of the existing categories are appropriate.
-   - New categories should be justified and follow the naming pattern of existing ones.
-
-Respond ONLY with valid JSON in this exact format:
-{{
-  "summary": "your concise technical summary here",
-  "category": "chosen category name",
-  "is_new_category": false
-}}
-
-If proposing a new category, set is_new_category to true."""
-
-    # Call Ollama
+def generate_summary(file_content: str, config: dict) -> str:
+    """Generate summary via Ollama"""
     try:
         resp = requests.post(
             f"{config['ollama_host']}/api/generate",
             json={
                 "model": config['ollama_model'],
-                "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": config.get('temperature', 0.3)
-                }
+                "prompt": f"Summarize this document in {config['summary_max_words']} words or less:\n\n{file_content}",
+                "temperature": config['temperature'],
+                "stream": False
             },
             timeout=120
         )
         
-        if resp.status_code != 200:
-            return {
-                "summary": f"[AI generation failed: {resp.status_code}]",
-                "category": existing_categories[0] if existing_categories else "Uncategorized",
-                "is_new_category": False,
-                "error": True
-            }
-        
-        result = resp.json()
-        response_text = result.get('response', '')
-        
-        # Try to parse JSON from response
-        # Sometimes models wrap JSON in markdown code blocks
-        json_text = response_text
-        if '```json' in response_text:
-            json_text = response_text.split('```json')[1].split('```')[0].strip()
-        elif '```' in response_text:
-            json_text = response_text.split('```')[1].split('```')[0].strip()
-        
-        parsed = json.loads(json_text)
-        
-        # Validate category
-        suggested_cat = parsed.get('category', 'Uncategorized')
-        is_new = suggested_cat not in existing_categories
-        
-        return {
-            "summary": parsed.get('summary', '').strip(),
-            "category": suggested_cat,
-            "is_new_category": is_new,
-            "error": False
-        }
-        
-    except json.JSONDecodeError as e:
-        if retry_count < max_retries:
-            print(f"  ⚠ JSON parse failed (attempt {retry_count + 1}/{max_retries})", file=sys.stderr)
-            choice = input("  Retry? [y/N]: ").strip().lower()
-            if choice == 'y':
-                import time
-                time.sleep(1)  # Brief pause before retry
-                return generate_summary_and_category(file_info, doc_dir, existing_categories, config, retry_count + 1, max_retries)
-        
-        print(f"WARNING: Failed to parse AI response: {e}", file=sys.stderr)
-        return {
-            "summary": "[AI response parsing failed - please enter manually]",
-            "category": existing_categories[0] if existing_categories else "Uncategorized",
-            "is_new_category": False,
-            "error": True
-        }
+        if resp.status_code == 200:
+            return resp.json().get('response', '').strip()
+        return None
     except Exception as e:
-        error_msg = str(e)
-        if "timeout" in error_msg.lower() or "connection" in error_msg.lower():
-            # Network/timeout error - worth retrying
-            if retry_count < max_retries:
-                print(f"  ⚠ Network error (attempt {retry_count + 1}/{max_retries}): {e}", file=sys.stderr)
-                choice = input("  Retry? [y/N]: ").strip().lower()
-                if choice == 'y':
-                    import time
-                    time.sleep(2)  # Longer pause for network issues
-                    return generate_summary_and_category(file_info, doc_dir, existing_categories, config, retry_count + 1, max_retries)
-        else:
-            # Other error - probably not worth retrying
-            print(f"WARNING: AI generation failed: {e}", file=sys.stderr)
-        
-        return {
-            "summary": "[AI generation error - please enter manually]",
-            "category": existing_categories[0] if existing_categories else "Uncategorized",
-            "is_new_category": False,
-            "error": True
-        }
+        print(f"  ✗ Error: {e}", file=sys.stderr)
+        return None
 
-def extract_categories_from_state(doc_dir: Path) -> list[str]:
-    """Extract categories from DMS_STATE in index.html"""
-    index_path = doc_dir / "index.html"
-    if not index_path.exists():
-        return []
+def categorize_file(file_path: str, summary: str) -> str:
+    """Simple categorization based on filename and summary keywords"""
+    name_lower = file_path.lower()
+    summary_lower = summary.lower()
     
-    content = index_path.read_text(encoding='utf-8', errors='replace')
-    
-    # Try DMS_STATE first
-    import re
-    state_pattern = re.compile(r'<!-- DMS_STATE\n(.*?)\n-->', re.DOTALL)
-    match = state_pattern.search(content)
-    
-    if match:
-        try:
-            state = json.loads(match.group(1))
-            return state.get('categories', [])
-        except:
-            pass
-    
-    # Fallback: parse from HTML
-    cat_pattern = re.compile(r'data-category="([^"]+)"', re.IGNORECASE)
-    categories = list(set(cat_pattern.findall(content)))
-    return categories
+    if any(x in summary_lower for x in ['setup', 'install', 'guide', 'howto', 'tutorial']):
+        return "Guides"
+    elif any(x in summary_lower for x in ['model', 'training', 'weight', 'lora']):
+        return "Models"
+    elif any(x in summary_lower for x in ['script', 'code', 'command', 'bash', 'python']):
+        return "Scripts"
+    elif any(x in summary_lower for x in ['workflow', 'process', 'procedure', 'optimization']):
+        return "Workflows"
+    elif any(x in name_lower or x in summary_lower for x in ['quick', 'reference', 'cheat', 'faq', 'tip']):
+        return "QuickRefs"
+    else:
+        return "Guides"  # Default
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate AI summaries and category suggestions")
+    parser = argparse.ArgumentParser(description="Generate AI summaries for new files")
     parser.add_argument("--doc", default="Doc", help="Doc directory")
-    parser.add_argument("--index", default="Doc/index.html", help="Path to index.html")
     parser.add_argument("--model", help="Override Ollama model")
-    parser.add_argument("--dry-run", action="store_true", help="Show what would be generated without saving")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would happen, don't write")
     args = parser.parse_args()
     
     doc_dir = Path(args.doc)
-    config = load_config()
+    scan_path = doc_dir / ".dms_scan.json"
     
-    # Override model if specified
+    if not doc_dir.exists():
+        print(f"ERROR: {doc_dir} not found")
+        return 1
+    
+    # Load config
+    config = load_config()
     if args.model:
         config['ollama_model'] = args.model
     
+    print("==> Generating AI summaries...\n")
     print(f"Using model: {config['ollama_model']}")
     print(f"Ollama host: {config['ollama_host']}\n")
     
-    # Check Ollama availability
+    # Check Ollama is available
     if not check_ollama(config['ollama_host'], config['ollama_model']):
-        choice = input("\nOllama not available. Enter summaries manually? [y/N]: ").strip().lower()
-        if choice != 'y':
-            return 1
-        manual_mode = True
-    else:
-        manual_mode = False
-    
-    # Load pending report
-    pending_path = doc_dir / ".dms_pending.json"
-    if not pending_path.exists():
-        print("ERROR: No pending scan report found.", file=sys.stderr)
-        print("Run 'dms scan' first.", file=sys.stderr)
+        print(f"ERROR: Cannot connect to Ollama at {config['ollama_host']}")
+        print(f"Make sure Ollama is running (ollama serve)")
         return 1
     
-    pending_report = json.loads(pending_path.read_text(encoding='utf-8'))
+    # Load scan results
+    scan_results = load_scan_results(scan_path)
+    files_to_summarize = scan_results.get('new_files', []) + scan_results.get('changed_files', [])
     
-    # Get files to process
-    new_files = pending_report.get('new_files', [])
-    changed_files = pending_report.get('changed_files', [])
-    
-    files_to_process = new_files + changed_files
-    
-    if not files_to_process:
+    if not files_to_summarize:
         print("No files to summarize.")
         return 0
     
-    # Get existing categories
-    existing_categories = extract_categories_from_state(doc_dir)
-    print(f"Existing categories: {', '.join(existing_categories)}\n")
+    print(f"Summarizing {len(files_to_summarize)} file(s)...\n")
     
-    # Process each file
     summaries = []
-    
-    for i, file_info in enumerate(files_to_process, 1):
-        print(f"[{i}/{len(files_to_process)}] Processing: {file_info['path']}")
+    for i, file_info in enumerate(files_to_summarize, 1):
+        file_path = file_info.get('path', '')
+        full_path = doc_dir / file_path.lstrip('./')
         
-        if manual_mode:
-            # Manual entry
-            print(f"  File: {Path(file_info['abs_path']).name}")
-            summary = input("  Enter summary: ").strip()
-            print(f"  Existing categories: {', '.join(existing_categories)}")
-            category = input("  Enter category: ").strip()
-            is_new = category not in existing_categories
+        print(f"[{i}/{len(files_to_summarize)}] {Path(file_path).name}")
+        
+        if not full_path.exists():
+            print(f"  ⚠ File not found\n")
+            continue
+        
+        # Read file content
+        content = read_file_content(full_path)
+        
+        # Generate summary
+        summary = generate_summary(content, config)
+        
+        if summary:
+            category = categorize_file(file_path, summary)
+            print(f"  Summary: {summary[:60]}...")
+            print(f"  Category: {category}\n")
+            
+            summaries.append({
+                "file": {
+                    "path": file_path,
+                    "hash": file_info.get('hash', ''),
+                    "size": file_info.get('size', 0)
+                },
+                "summary": summary,
+                "category": category,
+                "title": Path(file_path).stem,
+                "timestamp": datetime.now().isoformat()
+            })
         else:
-            # AI generation
-            result = generate_summary_and_category(
-                file_info, doc_dir, existing_categories, config
-            )
-            
-            summary = result['summary']
-            category = result['category']
-            is_new = result['is_new_category']
-            
-            print(f"  Summary: {summary}")
-            print(f"  Category: {category} {'(NEW)' if is_new else ''}")
-            
-            if result.get('error'):
-                # Allow manual override on error
-                choice = input("  AI failed. Enter manually? [y/N]: ").strip().lower()
-                if choice == 'y':
-                    summary = input("  Enter summary: ").strip()
-                    category = input("  Enter category: ").strip()
-                    is_new = category not in existing_categories
-        
-        summaries.append({
-            'file': file_info,
-            'summary': summary,
-            'category': category,
-            'is_new_category': is_new
-        })
-        
-        # Update existing categories list if new
-        if is_new and category:
-            existing_categories.append(category)
-        
-        print()
-    
-    # Save summaries to pending report
-    pending_report['summaries'] = summaries
-    pending_report['summarization_done'] = True
+            print(f"  ✗ Failed to generate summary\n")
     
     if args.dry_run:
-        print("Dry-run: Summary report:")
-        print(json.dumps(summaries, indent=2))
+        print(f"DRY RUN: Would save {len(summaries)} summary/summaries")
         return 0
     
-    pending_path.write_text(json.dumps(pending_report, indent=2), encoding='utf-8')
-    print(f"✓ Summaries saved to {pending_path}")
-    print(f"\nNext step: Run 'dms review' to approve/edit summaries")
+    # Save pending summaries
+    pending_path = doc_dir / ".dms_pending_summaries.json"
+    pending_data = {
+        "timestamp": datetime.now().isoformat(),
+        "summaries": summaries
+    }
+    
+    pending_path.write_text(json.dumps(pending_data, indent=2), encoding='utf-8')
+    
+    print(f"\n✓ Generated {len(summaries)} summary/summaries")
+    print(f"✓ Saved to {pending_path}")
+    print(f"\nNext step:")
+    print(f"  Run: dms review")
     
     return 0
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit(main())
