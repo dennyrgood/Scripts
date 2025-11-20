@@ -73,37 +73,65 @@ def update_dms_state(index_path: Path, new_state: dict) -> str:
     return content
 
 def find_category_section(content: str, category: str) -> tuple[int, int] | None:
-    """Find the <ul class="files"> section for a category. Returns (ul_open_end, ul_close_start)"""
-    # Try exact match first
+    """
+    Find the <ul class="files"> section for a category. 
+    Returns (ul_open_end, ul_close_start) - the range where we can insert <li> entries
+    
+    Tries multiple matching strategies to handle different category naming conventions
+    """
+    # Normalize category for comparison
+    cat_normalized = category.strip().lower()
+    
+    # Strategy 1: Try exact data-category match (case-insensitive)
     pattern = re.compile(
-        rf'<section\s+class="category"\s+data-category="{re.escape(category)}"[^>]*>.*?<ul\s+class="files"[^>]*>',
+        r'<section\s+class="category"\s+data-category="([^"]+)"[^>]*>.*?<ul\s+class="files"[^>]*>',
         re.DOTALL | re.IGNORECASE
     )
-    match = pattern.search(content)
     
-    if not match:
-        # Try h2 match
-        pattern2 = re.compile(
-            rf'<section\s+class="category"[^>]*>.*?<h2>{re.escape(category)}</h2>.*?<ul\s+class="files"[^>]*>',
-            re.DOTALL | re.IGNORECASE
-        )
-        match = pattern2.search(content)
+    for match in pattern.finditer(content):
+        data_cat = match.group(1).strip().lower()
+        if data_cat == cat_normalized:
+            ul_open_end = match.end()
+            # Find closing </ul>
+            ul_close_pattern = re.compile(r'</ul\s*>', re.IGNORECASE)
+            ul_close_match = ul_close_pattern.search(content[ul_open_end:])
+            if ul_close_match:
+                ul_close_start = ul_open_end + ul_close_match.start()
+                return (ul_open_end, ul_close_start)
     
-    if not match:
-        return None
+    # Strategy 2: Try <h2> tag match (for categories defined by h2 text)
+    h2_pattern = re.compile(
+        r'<section\s+class="category"[^>]*>.*?<h2>([^<]+)</h2>.*?<ul\s+class="files"[^>]*>',
+        re.DOTALL | re.IGNORECASE
+    )
     
-    ul_open_end = match.end()
+    for match in h2_pattern.finditer(content):
+        h2_text = match.group(1).strip().lower()
+        # Check if h2 contains the category (partial match)
+        if cat_normalized in h2_text or h2_text in cat_normalized:
+            ul_open_end = match.end()
+            ul_close_pattern = re.compile(r'</ul\s*>', re.IGNORECASE)
+            ul_close_match = ul_close_pattern.search(content[ul_open_end:])
+            if ul_close_match:
+                ul_close_start = ul_open_end + ul_close_match.start()
+                return (ul_open_end, ul_close_start)
     
-    # Find closing </ul>
-    ul_close_pattern = re.compile(r'</ul\s*>', re.IGNORECASE)
-    ul_close_match = ul_close_pattern.search(content[ul_open_end:])
+    # Strategy 3: Fuzzy match - check if category is similar to h2 text
+    for match in h2_pattern.finditer(content):
+        h2_text = match.group(1).strip().lower()
+        # Extract key words
+        cat_words = set(cat_normalized.split())
+        h2_words = set(h2_text.split())
+        # If significant overlap, consider it a match
+        if cat_words & h2_words:  # intersection
+            ul_open_end = match.end()
+            ul_close_pattern = re.compile(r'</ul\s*>', re.IGNORECASE)
+            ul_close_match = ul_close_pattern.search(content[ul_open_end:])
+            if ul_close_match:
+                ul_close_start = ul_open_end + ul_close_match.start()
+                return (ul_open_end, ul_close_start)
     
-    if not ul_close_match:
-        return None
-    
-    ul_close_start = ul_open_end + ul_close_match.start()
-    
-    return (ul_open_end, ul_close_start)
+    return None
 
 def create_category_section(category: str, display_name: str = None) -> str:
     """Create new category section HTML"""
@@ -188,15 +216,20 @@ def apply_changes(index_path: Path, approved_summaries: list, doc_dir: Path) -> 
         cat = item['category']
         by_category.setdefault(cat, []).append(item)
     
+    print(f"Processing {len(by_category)} categories...")
+    
     # Track insertions (from end to start to preserve positions)
     insertions = []
     new_categories_html = []
     
     for category, items in by_category.items():
+        print(f"  Category: {category} ({len(items)} items)")
+        
         # Check if category exists
         cat_position = find_category_section(content, category)
         
         if cat_position:
+            print(f"    ✓ Found existing category section")
             # Insert into existing category
             ul_open_end, ul_close_start = cat_position
             
@@ -205,6 +238,7 @@ def apply_changes(index_path: Path, approved_summaries: list, doc_dir: Path) -> 
             
             insertions.append((ul_close_start, entries_html))
         else:
+            print(f"    ✗ Category not found, will create new section")
             # New category - build section
             new_section = create_category_section(category, category)
             
