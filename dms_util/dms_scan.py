@@ -77,21 +77,20 @@ def scan_directory(doc_dir: Path, state: dict) -> tuple:
         if './md_outputs/' in rel_path:
             # This is a readable version
             # Find its corresponding original
-            filename = Path(rel_path).stem  # Remove .txt
+            # For files like IMG_4666.jpeg.txt, we need IMG_4666.jpeg
+            filename_no_txt = Path(rel_path).name
+            if filename_no_txt.endswith('.txt'):
+                filename_no_txt = filename_no_txt[:-4]  # Remove .txt
             
             # Look for matching original in root
             for orig_path in disk_files.keys():
                 if './md_outputs/' not in orig_path:  # In root
-                    if Path(orig_path).stem == filename:
+                    if Path(orig_path).name == filename_no_txt:
                         readable_versions[orig_path] = rel_path
                         break
     
     # Check for new and changed files
     for rel_path, file_path in disk_files.items():
-        # Skip original files that have readable versions
-        if rel_path in readable_versions:
-            continue
-        
         # Skip readable versions in md_outputs if they're paired with originals
         if './md_outputs/' in rel_path:
             # Check if this is a readable version of an original
@@ -102,7 +101,7 @@ def scan_directory(doc_dir: Path, state: dict) -> tuple:
                     break
             
             if is_paired:
-                # Process the original file instead, which will include the readable link
+                # Skip it - we'll process the original instead
                 continue
         
         file_hash = compute_file_hash(file_path)
