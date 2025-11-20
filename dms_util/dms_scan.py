@@ -177,6 +177,12 @@ def print_report(new_files, changed_files, missing_files, status_only=False):
     
     return total
 
+def check_for_images(new_files):
+    """Check if new files include images that need OCR"""
+    image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp'}
+    images = [f for f in new_files if Path(f['path']).suffix.lower() in image_exts]
+    return images
+
 def main():
     parser = argparse.ArgumentParser(description="Scan Doc/ directory for changes")
     parser.add_argument("--doc", default="Doc", help="Doc directory")
@@ -218,10 +224,20 @@ def main():
     scan_file.write_text(json.dumps(scan_result, indent=2))
     
     print(f"\n✓ Scan results saved to {scan_file}")
+    
+    # Check for images that need OCR
+    images_found = check_for_images(new_files)
+    
     print(f"\nNext steps:")
-    print(f"  1. Review the changes above")
-    print(f"  2. Run: dms summarize (to generate summaries for new files)")
-    print(f"  3. Or run: dms cleanup (to remove missing files from state)")
+    if images_found:
+        print(f"  1. Run: dms image-to-text (convert {len(images_found)} image(s) to text)")
+        print(f"  2. Run: dms summarize (generate summaries for text and other files)")
+    else:
+        print(f"  1. Run: dms summarize (to generate summaries for new files)")
+    print(f"  2. Run: dms review (to approve changes)")
+    print(f"  3. Run: dms apply (to update index.html)")
+    if missing_files:
+        print(f"\n  Or run: dms cleanup (to remove missing files from state)")
     
     return 0
 
