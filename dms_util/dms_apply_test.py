@@ -202,30 +202,33 @@ def apply_changes(index_path: Path, approved_summaries: List[dict], doc_dir: Pat
     updated_content = content
     insertion_count = 0
     
-    # 3. Process each category - use regex replacement to avoid index drift
+    # 3. Process each category
     for category, summaries in categories_to_insert.items():
+        
+        # Check if the category section already exists
+        category_indices = find_category_section(updated_content, category)
         
         # Generate all <li> entries for this category
         new_list_items = "\n".join([
             create_file_entry(s, doc_dir) for s in summaries
         ])
         
-        # Use regex to find and replace - avoids index position issues
-        # Pattern: find this specific category's <ul>...</ul> and insert before </ul>
-        pattern = rf'(<section[^>]*data-category="{re.escape(category)}"[^>]*>.*?<ul\s+class="files"\s*>)(.*?)(</ul>.*?</section>)'
-        
-        def replace_func(match):
-            return match.group(1) + match.group(2) + "\n" + new_list_items + match.group(3)
-        
-        replaced = re.sub(pattern, replace_func, updated_content, count=1, flags=re.DOTALL | re.IGNORECASE)
-        
-        if replaced != updated_content:
-            # Replacement succeeded - category found and updated
-            updated_content = replaced
+        if category_indices:
+            # Category exists: Insert new <li> items into the existing <ul>
+            ul_start, ul_end = category_indices
+            
+            # Insert the new items before the closing </ul> tag (ul_end index)
+            # Add a leading newline for clean formatting
+            updated_content = (
+                updated_content[:ul_end] + 
+                "\n" + new_list_items + 
+                updated_content[ul_end:]
+            )
             insertion_count += len(summaries)
             print(f"  + Added {len(summaries)} file(s) to existing category: {category}")
+            
         else:
-            # Category section not found - create new one
+            # Category does NOT exist: Create the entire new section and insert it
             print(f"  + Creating new category section: {category}")
             new_section = create_category_section(category, new_list_items)
             
@@ -240,6 +243,7 @@ def apply_changes(index_path: Path, approved_summaries: List[dict], doc_dir: Pat
                     state.setdefault('categories', []).append(category)
             else:
                 print(f"ERROR: Could not find </main> tag to insert new category '{category}'. Skipping.", file=sys.stderr)
+                # If insertion fails, the insertion_count remains unchanged for this group
 
     # 4. Update DMS State: Add approved files to processed_files
     for summary_info in approved_summaries:
