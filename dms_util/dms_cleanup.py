@@ -57,7 +57,7 @@ def main():
     # Regenerate index.html
     print(f"\n==> Regenerating index.html...\n")
     
-    scripts_dir = Path(__file__).parent.parent.parent
+    scripts_dir = Path(__file__).parent.parent
     render_script = scripts_dir / "dms_util" / "dms_render.py"
     
     result = subprocess.run(
