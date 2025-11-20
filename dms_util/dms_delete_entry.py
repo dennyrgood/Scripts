@@ -2,20 +2,23 @@
 """
 dms_delete_entry.py - Remove entries from .dms_state.json
 
-This allows you to selectively delete documents from the state.
+Interactive tool for managing document entries in the DMS state.
 Deleted entries will be re-scanned as "new" on the next scan,
 allowing them to be re-summarized or re-processed.
 
 Usage:
-  dms delete-entry <file_path>     # Delete a specific entry
-  dms delete-entry --list          # List all entries in state
-  dms delete-entry --by-pattern <pattern>  # Delete all matching pattern (careful!)
+  dms delete-entry              # Interactive menu (default)
   
+Non-interactive mode:
+  dms delete-entry list                                    # List all entries
+  dms delete-entry delete <path>                           # Delete specific entry
+  dms delete-entry by-pattern <pattern> [--words-over N]  # Delete matching pattern
+
 Examples:
-  dms delete-entry "./index.html"
-  dms delete-entry "./md_outputs/IMG_4666.jpeg.txt"
-  dms delete-entry --by-pattern "IMG_"
-  dms delete-entry --by-pattern "long" --words-over 100  # Delete all with >100 word summaries
+  dms delete-entry                              # Launch interactive menu
+  dms delete-entry delete "./index.html"
+  dms delete-entry by-pattern "IMG_"
+  dms delete-entry by-pattern "summary" --words-over 100  # Delete all with >100 word summaries
 """
 import argparse
 import sys
@@ -127,15 +130,128 @@ def delete_by_pattern(state: dict, pattern: str, words_over: int = None) -> int:
     return deleted
 
 
+def interactive_menu(state: dict, state_path: Path) -> int:
+    """Interactive menu for deleting entries"""
+    docs = state.get('documents', {})
+    
+    while True:
+        print("\n" + "="*60)
+        print("DMS Entry Deletion Tool")
+        print("="*60)
+        print(f"\nDocuments in state: {len(docs)}")
+        print("\nOptions:")
+        print("  1. List all entries")
+        print("  2. Delete by pattern")
+        print("  3. Delete entries with long summaries (>50 words)")
+        print("  4. Search and delete")
+        print("  5. Exit without saving")
+        print("\n6. SAVE and exit")
+        
+        choice = input("\nEnter choice (1-6): ").strip()
+        
+        if choice == "1":
+            list_entries(state)
+            input("\nPress Enter to continue...")
+        
+        elif choice == "2":
+            pattern = input("\nEnter pattern to search for (case-insensitive): ").strip()
+            if pattern:
+                deleted = delete_by_pattern(state, pattern, words_over=None)
+                if deleted > 0:
+                    docs = state.get('documents', {})
+        
+        elif choice == "3":
+            # Find and delete summaries over 50 words
+            print("\n==> Finding entries with summaries > 50 words...\n")
+            long_summaries = []
+            for path, doc in docs.items():
+                summary = doc.get('summary', '')
+                word_count = len(summary.split())
+                if word_count > 50:
+                    long_summaries.append((path, word_count, doc.get('category', 'Unknown')))
+            
+            if not long_summaries:
+                print("No entries with summaries over 50 words found.")
+                input("\nPress Enter to continue...")
+                continue
+            
+            print(f"Found {len(long_summaries)} entries with long summaries:\n")
+            for i, (path, words, cat) in enumerate(long_summaries, 1):
+                print(f"  {i}. {path}")
+                print(f"     Category: {cat} | Words: {words}")
+            
+            confirm = input(f"\nDelete all {len(long_summaries)} entries? [y/N]: ").strip().lower()
+            if confirm == 'y':
+                for path, _, _ in long_summaries:
+                    del docs[path]
+                print(f"✓ Deleted {len(long_summaries)} entries")
+                docs = state.get('documents', {})
+        
+        elif choice == "4":
+            search_term = input("\nEnter search term: ").strip()
+            if search_term:
+                matches = []
+                search_lower = search_term.lower()
+                for path, doc in sorted(docs.items()):
+                    if search_lower in path.lower() or search_lower in doc.get('summary', '').lower():
+                        matches.append(path)
+                
+                if not matches:
+                    print(f"No matches found for '{search_term}'")
+                else:
+                    print(f"\nFound {len(matches)} matches:\n")
+                    for i, path in enumerate(matches, 1):
+                        doc = docs[path]
+                        word_count = len(doc.get('summary', '').split())
+                        print(f"  {i}. {path}")
+                        print(f"     Words: {word_count} | Category: {doc.get('category', 'Unknown')}")
+                    
+                    selections = input(f"\nEnter numbers to delete (comma-separated), or press Enter to skip: ").strip()
+                    if selections:
+                        try:
+                            indices = [int(x.strip())-1 for x in selections.split(',')]
+                            to_delete = [matches[i] for i in indices if 0 <= i < len(matches)]
+                            if to_delete:
+                                confirm = input(f"\nDelete {len(to_delete)} entries? [y/N]: ").strip().lower()
+                                if confirm == 'y':
+                                    for path in to_delete:
+                                        del docs[path]
+                                    print(f"✓ Deleted {len(to_delete)} entries")
+                        except (ValueError, IndexError):
+                            print("Invalid selection")
+                input("\nPress Enter to continue...")
+        
+        elif choice == "5":
+            print("Exiting without saving.")
+            return 0
+        
+        elif choice == "6":
+            if docs:
+                state_path.write_text(json.dumps(state, indent=2), encoding='utf-8')
+                print("\n✓ State saved!")
+                print(f"✓ Remaining documents: {len(docs)}")
+                print(f"\nNext step:")
+                print(f"  Run: dms scan")
+                print(f"  The deleted entries will appear as 'new'.")
+                return 0
+            else:
+                print("ERROR: No documents left - would create empty state")
+                return 1
+        
+        else:
+            print("Invalid choice")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Delete entries from .dms_state.json",
         epilog="Deleted entries will appear as 'new' on the next scan."
     )
     parser.add_argument("--doc", default="Doc", help="Doc directory")
+    parser.add_argument("--no-interactive", action="store_true", help="Use non-interactive mode")
     
-    # Subcommands
-    subparsers = parser.add_subparsers(dest="action", help="Action to perform")
+    # Subcommands for non-interactive mode
+    subparsers = parser.add_subparsers(dest="action", help="Action to perform (non-interactive)")
     
     # List entries
     subparsers.add_parser("list", help="List all entries in state")
@@ -151,12 +267,6 @@ def main():
     
     args = parser.parse_args()
     
-    if not args.action:
-        # Old style: dms delete-entry <path>
-        # This shouldn't happen with new subparser style
-        parser.print_help()
-        return 1
-    
     doc_dir = Path(args.doc)
     state_path = doc_dir / ".dms_state.json"
     
@@ -171,7 +281,11 @@ def main():
     
     docs = state.get('documents', {})
     
-    # Perform action
+    # If no action specified or interactive flag set, use interactive mode
+    if not args.action:
+        return interactive_menu(state, state_path)
+    
+    # Non-interactive mode
     if args.action == "list":
         list_entries(state)
         return 0

@@ -160,10 +160,10 @@ def cmd_status(args, scripts_dir: Path, config: dict):
     return run_dms_script("dms_util/dms_status.py", ["--doc", "Doc"], scripts_dir)
 
 def cmd_delete_entry(args, scripts_dir: Path, config: dict):
-    """Delete entries from state"""
+    """Delete entries from state - launches interactive menu by default"""
     script_args = ["--doc", "Doc"]
     
-    # Map del_action to script action
+    # If subcommand specified, build args for non-interactive mode
     if hasattr(args, 'del_action') and args.del_action:
         script_args.append(args.del_action)
         
@@ -174,13 +174,7 @@ def cmd_delete_entry(args, scripts_dir: Path, config: dict):
             if hasattr(args, 'words_over') and args.words_over:
                 script_args.append("--words-over")
                 script_args.append(str(args.words_over))
-    else:
-        # No action specified, show help
-        print("Usage: dms delete-entry <action>")
-        print("  dms delete-entry list")
-        print("  dms delete-entry delete <path>")
-        print("  dms delete-entry by-pattern <pattern> [--words-over N]")
-        return 1
+    # else: no subcommand = interactive mode (default)
     
     return run_dms_script("dms_util/dms_delete_entry.py", script_args, scripts_dir)
 
@@ -213,12 +207,12 @@ def main():
     subparsers.add_parser("cleanup", help="Remove deleted files from index.html")
     
     # delete-entry
-    p_del = subparsers.add_parser("delete-entry", help="Delete entries from state (marks as 'new' on next scan)")
-    p_del_sub = p_del.add_subparsers(dest="del_action", help="Action")
-    p_del_sub.add_parser("list", help="List all entries")
-    p_del_delete = p_del_sub.add_parser("delete", help="Delete a specific entry")
+    p_del = subparsers.add_parser("delete-entry", help="Delete entries from state (interactive menu by default)")
+    p_del_sub = p_del.add_subparsers(dest="del_action", help="Action (optional - omit for interactive mode)")
+    p_del_sub.add_parser("list", help="List all entries (non-interactive)")
+    p_del_delete = p_del_sub.add_parser("delete", help="Delete specific entry (non-interactive)")
     p_del_delete.add_argument("path", help="File path (e.g., './index.html')")
-    p_del_pattern = p_del_sub.add_parser("by-pattern", help="Delete matching pattern")
+    p_del_pattern = p_del_sub.add_parser("by-pattern", help="Delete by pattern (non-interactive)")
     p_del_pattern.add_argument("pattern", help="Pattern to match")
     p_del_pattern.add_argument("--words-over", type=int, help="Only if summary > N words")
     

@@ -34,7 +34,11 @@ def approve_summary(summary_info: dict) -> bool:
     print(f"{'='*70}")
     
     while True:
-        choice = input("\n[a]pprove, [e]dit, [c]ategory, [s]kip, [q]uit? > ").strip().lower()
+        # Show that approve is the default by indicating it in the prompt
+        choice = input("\n[a]pprove (default), [e]dit, [c]ategory, [s]kip, [q]uit? > ").strip().lower()
+        # Treat an empty input (simple Enter) as approve
+        if choice == '':
+            choice = 'a'
         
         if choice == 'a':
             return True

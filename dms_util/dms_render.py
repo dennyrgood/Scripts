@@ -108,9 +108,11 @@ def _generate_html(docs_by_category, state):
     #viewer{{flex:1;display:flex;flex-direction:column;min-width:360px}}
     #viewerHeader{{padding:14px;border-bottom:1px solid rgba(255,255,255,0.03);display:flex;align-items:center;gap:12px}}
     #viewerHeader h3{{margin:0;font-size:15px}}
-    #viewerBody{{padding:18px;overflow:auto;background:linear-gradient(180deg, rgba(255,255,255,0.006), rgba(255,255,255,0.004))}}
+    #viewerBody{{padding:18px;overflow:auto;background:linear-gradient(180deg, rgba(255,255,255,0.006), rgba(255,255,255,0.004));display:flex;flex-direction:column}}
     /* content area */
-    #content{{max-width:1000px;margin:0 auto}}
+    #content{{max-width:1000px;margin:0 auto;flex:1;display:flex;flex-direction:column;width:100%}}
+    /* PDF viewer should take full height */
+    #pdfViewer{{height:80vh !important;}}
     /* markdown container */
     #mdViewer{{background:rgba(255,255,255,0.01);padding:18px;border-radius:8px}}
     #mdViewer h1,#mdViewer h2,#mdViewer h3{{color:#e8faff}}
@@ -194,9 +196,18 @@ def _generate_html(docs_by_category, state):
     }}
 
     function openFilePreview(liElement) {{
-      const path = liElement.dataset.path;
-      const pdf = liElement.dataset.pdf || '';
-      const title = liElement.querySelector('.title')?.innerText || 'Document';
+      let path, title;
+      
+      // Handle both element and string path inputs
+      if(typeof liElement === 'string') {{
+        path = liElement;
+        title = path.split('/').pop().split('.')[0];
+      }} else {{
+        path = liElement.dataset.path;
+        title = liElement.querySelector('.title')?.innerText || 'Document';
+      }}
+      
+      const pdf = (liElement.dataset?.pdf || '');
       
       viewerTitle.innerText = title;
       mdViewer.style.display = 'none';
@@ -232,6 +243,13 @@ def _generate_html(docs_by_category, state):
       if(e === 'docx' || e === 'doc'){{
         rawViewer.style.display = 'block';
         rawViewer.innerHTML = `This is a binary Office file. <a class="inline-link" href="${{path}}" target="_blank" rel="noopener">Open ${{path}}</a>`;
+        return;
+      }}
+      
+      // Handle images
+      if(['png','jpg','jpeg','gif','webp','bmp','svg'].includes(e)){{
+        rawViewer.style.display = 'block';
+        rawViewer.innerHTML = `<img src="${{path}}" style="max-width:100%;max-height:600px;border-radius:8px;" alt="${{title}}">`;
         return;
       }}
       
@@ -279,8 +297,21 @@ def _generate_html(docs_by_category, state):
           return li.dataset.path===hash || li.dataset.pdf===hash || li.querySelector('.title').innerText===hash;
         }});
         if(el) openFilePreview(el);
+        else if(hash) openFilePreview(hash);  // If no li found, try opening the path directly
       }}
       filterFiles('');
+    }});
+
+    // Handle hash changes (when clicking image/file links)
+    window.addEventListener('hashchange', ()=>{{
+      const hash = decodeURIComponent(location.hash.replace(/^#/,''));
+      if(hash){{
+        const el = Array.from(document.querySelectorAll('li.file')).find(li=>{{
+          return li.dataset.path===hash || li.dataset.pdf===hash || li.querySelector('.title').innerText===hash;
+        }});
+        if(el) openFilePreview(el);
+        else if(hash) openFilePreview(hash);  // If no li found, try opening the path directly
+      }}
     }});
 
     window.addEventListener('keydown', (e)=>{{
@@ -315,12 +346,19 @@ def _generate_category_section(category, docs):
         summary = html_module.escape(doc_data.get("summary", ""))
         path_escaped = html_module.escape(file_path)
         
-        # Check if this has an original file link
+        # Check if this has an original file link (image paired with text)
         original_link = ""
         if doc_data.get("readable_version"):
             readable_path = html_module.escape(doc_data["readable_version"])
-            original_file = Path(readable_path).stem.replace('.txt', '')
-            original_link = f'<br><small><a href="#{readable_path}" style="color:var(--accent-2)">📄 Original: {html_module.escape(original_file)}</a></small>'
+            original_file = Path(readable_path).stem
+            # Determine icon and label based on file type
+            if readable_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
+                icon = "🖼️"
+                label = "View Image"
+            else:
+                icon = "📄"
+                label = "View Original"
+            original_link = f'<br><small><a href="#{readable_path}" style="color:var(--accent-2)">{icon} {label}</a></small>'
         
         li = f"""            <li class="file" data-path="{path_escaped}" data-link="{path_escaped}">
       <div class="meta">
