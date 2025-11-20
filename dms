@@ -157,8 +157,7 @@ def cmd_init(args, scripts_dir: Path, config: dict):
 
 def cmd_status(args, scripts_dir: Path, config: dict):
     """Show current DMS state"""
-    print("==> Checking DMS status...")
-    return run_dms_script("dms_util/dms_scan.py", ["--doc", "Doc", "--index", "Doc/index.html", "--status-only"], scripts_dir)
+    return run_dms_script("dms_util/dms_status.py", ["--doc", "Doc"], scripts_dir)
 
 def main():
     parser = argparse.ArgumentParser(
