@@ -101,6 +101,7 @@ def main():
     
     doc_dir = Path(args.doc)
     scan_path = doc_dir / ".dms_scan.json"
+    pending_path = doc_dir / ".dms_pending_summaries.json"
     
     if not doc_dir.exists():
         print(f"ERROR: {doc_dir} not found")
@@ -129,14 +130,30 @@ def main():
         print("No files to summarize.")
         return 0
     
-    print(f"Summarizing {len(files_to_summarize)} file(s)...\n")
+    # Check if we have partial progress - resume from there
+    already_done = set()
+    if pending_path.exists():
+        print(f"Found partial progress in {pending_path}")
+        try:
+            existing = json.loads(pending_path.read_text(encoding='utf-8'))
+            already_done = {s['file']['path'] for s in existing.get('summaries', [])}
+            print(f"✓ {len(already_done)} already summarized, resuming from there\n")
+            summaries = existing.get('summaries', [])
+        except:
+            summaries = []
+    else:
+        summaries = []
     
-    summaries = []
-    for i, file_info in enumerate(files_to_summarize, 1):
+    # Filter out already-done files
+    files_to_process = [f for f in files_to_summarize if f.get('path') not in already_done]
+    
+    print(f"Summarizing {len(files_to_process)}/{len(files_to_summarize)} file(s)...\n")
+    
+    for i, file_info in enumerate(files_to_process, 1):
         file_path = file_info.get('path', '')
         full_path = doc_dir / file_path.lstrip('./')
         
-        print(f"[{i}/{len(files_to_summarize)}] {Path(file_path).name}")
+        print(f"[{len(already_done) + i}/{len(files_to_summarize)}] {Path(file_path).name}")
         
         if not full_path.exists():
             print(f"  ⚠ File not found\n")
