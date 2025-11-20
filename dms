@@ -15,9 +15,10 @@ Usage (from repo root):
   dms image-to-text     # Convert images to text
   dms summarize         # Generate AI summaries (dry-run by default)
   dms review            # Interactive approval
-  dms apply             # Write approved changes to index.html
-  dms cleanup           # Remove deleted files from index.html
-  dms orphans           # Remove orphaned entries from DMS_STATE
+  dms apply             # Write approved changes to .dms_state.json
+  dms cleanup           # Remove deleted files from state
+  dms orphans           # Remove orphaned entries from state
+  dms render            # Regenerate index.html from .dms_state.json
   dms auto              # Run full workflow (scan → image-to-text → summarize → review → apply)
   dms init              # Create new index.html for a fresh Doc/ directory
   dms status            # Show current state
@@ -121,6 +122,11 @@ def cmd_orphans(args, scripts_dir: Path, config: dict):
     print("==> Removing orphaned entries...")
     return run_dms_script("dms_util/dms_delete_orphans.py", ["--index", "Doc/index.html"], scripts_dir)
 
+def cmd_render(args, scripts_dir: Path, config: dict):
+    """Regenerate index.html from .dms_state.json"""
+    print("==> Regenerating index.html...")
+    return run_dms_script("dms_util/dms_render.py", ["--doc", "Doc", "--index", "Doc/index.html"], scripts_dir)
+
 def cmd_auto(args, scripts_dir: Path, config: dict):
     """Run full workflow"""
     print("==> Running full DMS workflow...\n")
@@ -191,6 +197,9 @@ def main():
     # orphans
     subparsers.add_parser("orphans", help="Remove orphaned entries from DMS_STATE")
     
+    # render
+    subparsers.add_parser("render", help="Regenerate index.html from .dms_state.json")
+    
     # auto
     subparsers.add_parser("auto", help="Run full workflow (scan → process → summarize → review → apply)")
     
@@ -232,11 +241,13 @@ def main():
     commands = {
         "scan": cmd_scan,
         "image-to-text": cmd_process_images,
+        "render": cmd_render,
         "summarize": cmd_summarize,
         "review": cmd_review,
         "apply": cmd_apply,
         "cleanup": cmd_cleanup,
         "orphans": cmd_orphans,
+        "render": cmd_render,
         "auto": cmd_auto,
         "init": cmd_init,
         "status": cmd_status
