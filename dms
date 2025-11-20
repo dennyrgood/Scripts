@@ -98,18 +98,18 @@ def cmd_summarize(args, scripts_dir: Path, config: dict):
     dry_run = ["--dry-run"] if args.dry_run else []
     model = ["--model", args.model] if args.model else []
     return run_dms_script("dms_util/dms_summarize.py", 
-                         ["--doc", "Doc", "--index", "Doc/index.html"] + dry_run + model, 
+                         ["--doc", "Doc"] + dry_run + model, 
                          scripts_dir)
 
 def cmd_review(args, scripts_dir: Path, config: dict):
     """Interactive review of proposed changes"""
     print("==> Starting interactive review...")
-    return run_dms_script("dms_util/dms_review.py", ["--index", "Doc/index.html"], scripts_dir)
+    return run_dms_script("dms_util/dms_review.py", ["--doc", "Doc"], scripts_dir)
 
 def cmd_apply(args, scripts_dir: Path, config: dict):
     """Apply approved changes to index.html"""
     print("==> Applying changes to index.html...")
-    return run_dms_script("dms_util/dms_apply.py", ["--index", "Doc/index.html"], scripts_dir)
+    return run_dms_script("dms_util/dms_apply.py", ["--doc", "Doc"], scripts_dir)
 
 def cmd_cleanup(args, scripts_dir: Path, config: dict):
     """Remove deleted files from index.html"""
@@ -119,7 +119,7 @@ def cmd_cleanup(args, scripts_dir: Path, config: dict):
 def cmd_render(args, scripts_dir: Path, config: dict):
     """Regenerate index.html from .dms_state.json"""
     print("==> Regenerating index.html...")
-    return run_dms_script("dms_util/dms_render.py", ["--doc", "Doc", "--index", "Doc/index.html"], scripts_dir)
+    return run_dms_script("dms_util/dms_render.py", ["--doc", "Doc"], scripts_dir)
 
 def cmd_auto(args, scripts_dir: Path, config: dict):
     """Run full workflow"""
@@ -153,11 +153,36 @@ def cmd_auto(args, scripts_dir: Path, config: dict):
 def cmd_init(args, scripts_dir: Path, config: dict):
     """Initialize new index.html for a fresh Doc/ directory"""
     print("==> Initializing new Doc/index.html...")
-    return run_dms_script("dms_util/dms_init.py", ["--doc", "Doc", "--index", "Doc/index.html"], scripts_dir)
+    return run_dms_script("dms_util/dms_init.py", ["--doc", "Doc"], scripts_dir)
 
 def cmd_status(args, scripts_dir: Path, config: dict):
     """Show current DMS state"""
     return run_dms_script("dms_util/dms_status.py", ["--doc", "Doc"], scripts_dir)
+
+def cmd_delete_entry(args, scripts_dir: Path, config: dict):
+    """Delete entries from state"""
+    script_args = ["--doc", "Doc"]
+    
+    # Map del_action to script action
+    if hasattr(args, 'del_action') and args.del_action:
+        script_args.append(args.del_action)
+        
+        if args.del_action == "delete":
+            script_args.append(args.path)
+        elif args.del_action == "by-pattern":
+            script_args.append(args.pattern)
+            if hasattr(args, 'words_over') and args.words_over:
+                script_args.append("--words-over")
+                script_args.append(str(args.words_over))
+    else:
+        # No action specified, show help
+        print("Usage: dms delete-entry <action>")
+        print("  dms delete-entry list")
+        print("  dms delete-entry delete <path>")
+        print("  dms delete-entry by-pattern <pattern> [--words-over N]")
+        return 1
+    
+    return run_dms_script("dms_util/dms_delete_entry.py", script_args, scripts_dir)
 
 def main():
     parser = argparse.ArgumentParser(
@@ -186,6 +211,16 @@ def main():
     
     # cleanup
     subparsers.add_parser("cleanup", help="Remove deleted files from index.html")
+    
+    # delete-entry
+    p_del = subparsers.add_parser("delete-entry", help="Delete entries from state (marks as 'new' on next scan)")
+    p_del_sub = p_del.add_subparsers(dest="del_action", help="Action")
+    p_del_sub.add_parser("list", help="List all entries")
+    p_del_delete = p_del_sub.add_parser("delete", help="Delete a specific entry")
+    p_del_delete.add_argument("path", help="File path (e.g., './index.html')")
+    p_del_pattern = p_del_sub.add_parser("by-pattern", help="Delete matching pattern")
+    p_del_pattern.add_argument("pattern", help="Pattern to match")
+    p_del_pattern.add_argument("--words-over", type=int, help="Only if summary > N words")
     
     # render
     subparsers.add_parser("render", help="Regenerate index.html from .dms_state.json")
@@ -236,10 +271,10 @@ def main():
         "review": cmd_review,
         "apply": cmd_apply,
         "cleanup": cmd_cleanup,
-        "render": cmd_render,
         "auto": cmd_auto,
         "init": cmd_init,
-        "status": cmd_status
+        "status": cmd_status,
+        "delete-entry": cmd_delete_entry
     }
     
     return commands[args.command](args, scripts_dir, config)

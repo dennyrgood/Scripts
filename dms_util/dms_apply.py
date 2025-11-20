@@ -96,11 +96,10 @@ def apply_changes(state_path: Path, pending_path: Path, scripts_dir: Path) -> in
     # Now render index.html from the new state
     print(f"\n==> Regenerating index.html from state...\n")
     
-    render_script = scripts_dir / "dms_render.py"
+    render_script = scripts_dir / "dms_util" / "dms_render.py"
     result = subprocess.run(
         [sys.executable, str(render_script), 
-         "--doc", str(state_path.parent),
-         "--index", str(state_path.parent / "index.html")],
+         "--doc", str(state_path.parent)],
         capture_output=False
     )
     
@@ -122,7 +121,7 @@ def apply_changes(state_path: Path, pending_path: Path, scripts_dir: Path) -> in
 
 def find_scripts_dir() -> Path:
     """Find the Scripts directory"""
-    script_dir = Path(__file__).parent.parent.parent
+    script_dir = Path(__file__).parent.parent
     return script_dir
 
 def main():

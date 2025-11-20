@@ -56,11 +56,25 @@ def check_ollama(host: str, model: str) -> bool:
 def generate_summary(file_content: str, config: dict) -> str:
     """Generate summary via Ollama"""
     try:
+        prompt = f"""Write a brief technical summary of this document.
+
+Requirements:
+- Maximum 50 words (STRICTLY enforced - count your words)
+- 1-2 sentences
+- Focus on what this document contains and its purpose
+- Be concise and factual
+- No fluff or repetition
+
+Document:
+{file_content}
+
+Summary:"""
+        
         resp = requests.post(
             f"{config['ollama_host']}/api/generate",
             json={
                 "model": config['ollama_model'],
-                "prompt": f"Summarize this document in {config['summary_max_words']} words or less:\n\n{file_content}",
+                "prompt": prompt,
                 "temperature": config['temperature'],
                 "stream": False
             },
@@ -73,6 +87,15 @@ def generate_summary(file_content: str, config: dict) -> str:
     except Exception as e:
         print(f"  ✗ Error: {e}", file=sys.stderr)
         return None
+
+def truncate_summary(summary: str, max_words: int = 50) -> tuple[str, bool]:
+    """Truncate summary to max_words and return (summary, was_truncated)"""
+    words = summary.split()
+    if len(words) <= max_words:
+        return summary, False
+    
+    truncated = ' '.join(words[:max_words]) + '…'
+    return truncated, True
 
 def categorize_file(file_path: str, summary: str) -> str:
     """Simple categorization based on filename and summary keywords"""
@@ -166,8 +189,15 @@ def main():
         summary = generate_summary(content, config)
         
         if summary:
-            category = categorize_file(file_path, summary)
-            print(f"  Summary: {summary[:60]}...")
+            # Check and truncate if needed
+            word_count = len(summary.split())
+            truncated_summary, was_truncated = truncate_summary(summary, 50)
+            
+            if was_truncated:
+                print(f"  ⚠ WARNING: Summary exceeded 50 words ({word_count}), truncated")
+            
+            category = categorize_file(file_path, truncated_summary)
+            print(f"  Summary: {truncated_summary[:60]}...")
             print(f"  Category: {category}\n")
             
             summaries.append({
@@ -176,7 +206,7 @@ def main():
                     "hash": file_info.get('hash', ''),
                     "size": file_info.get('size', 0)
                 },
-                "summary": summary,
+                "summary": truncated_summary,
                 "category": category,
                 "title": Path(file_path).stem,
                 "timestamp": datetime.now().isoformat()

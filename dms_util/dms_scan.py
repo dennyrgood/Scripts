@@ -78,16 +78,21 @@ def scan_directory(doc_dir: Path, state: dict) -> tuple:
             # This is a readable version
             # Find its corresponding original
             # For files like IMG_4666.jpeg.txt, we need IMG_4666.jpeg
-            filename_no_txt = Path(rel_path).name
-            if filename_no_txt.endswith('.txt'):
-                filename_no_txt = filename_no_txt[:-4]  # Remove .txt
-            
-            # Look for matching original in root
-            for orig_path in disk_files.keys():
-                if './md_outputs/' not in orig_path:  # In root
-                    if Path(orig_path).name == filename_no_txt:
-                        readable_versions[orig_path] = rel_path
-                        break
+            filename_with_ext = Path(rel_path).name
+            if filename_with_ext.endswith('.txt'):
+                # Remove .txt extension
+                filename_no_txt = filename_with_ext[:-4]  # e.g., "IMG_4666.jpeg" or "IMG_4666 copy"
+                
+                # Look for matching original in root
+                for orig_path in disk_files.keys():
+                    if './md_outputs/' not in orig_path:  # In root
+                        orig_name = Path(orig_path).name
+                        # Match: filename_no_txt could be either:
+                        # 1. The full original name (IMG_4666.jpeg.txt -> IMG_4666.jpeg)
+                        # 2. The original without extension (IMG_4666.jpeg.txt from image-to-text -> IMG_4666.jpeg)
+                        if orig_name == filename_no_txt or orig_name.startswith(filename_no_txt):
+                            readable_versions[orig_path] = rel_path
+                            break
     
     # Check for new and changed files
     for rel_path, file_path in disk_files.items():
@@ -104,27 +109,47 @@ def scan_directory(doc_dir: Path, state: dict) -> tuple:
                 # Skip it - we'll process the original instead
                 continue
         
-        # Check if this original file is already tracked (via its readable version)
-        if rel_path not in state_docs and rel_path in readable_versions:
-            # This original file has a readable version that's already in state
-            # Skip it - don't report as new
+        # For original files that have readable versions:
+        # Track the readable version, not the original
+        if rel_path in readable_versions:
+            readable_path = readable_versions[rel_path]
+            
+            # Skip the original - process the readable instead
+            if readable_path not in disk_files:
+                # Readable doesn't exist on disk - shouldn't happen but skip anyway
+                continue
+            
+            file_hash = compute_file_hash(disk_files[readable_path])
+            
+            if readable_path not in state_docs:
+                # New readable file
+                new_files.append({
+                    "path": readable_path,
+                    "hash": file_hash,
+                    "size": disk_files[readable_path].stat().st_size
+                })
+            else:
+                # Check if readable version changed
+                if state_docs[readable_path].get("hash") != file_hash:
+                    changed_files.append({
+                        "path": readable_path,
+                        "old_hash": state_docs[readable_path].get("hash"),
+                        "new_hash": file_hash
+                    })
+            
+            # Skip processing the original file
             continue
         
+        # For files without readable versions, process normally
         file_hash = compute_file_hash(file_path)
         
         if rel_path not in state_docs:
             # New file
-            file_info = {
+            new_files.append({
                 "path": rel_path,
                 "hash": file_hash,
                 "size": file_path.stat().st_size
-            }
-            
-            # If this file has a readable version, link it
-            if rel_path in readable_versions:
-                file_info["readable_version"] = readable_versions[rel_path]
-            
-            new_files.append(file_info)
+            })
         else:
             # Check if changed
             if state_docs[rel_path].get("hash") != file_hash:
