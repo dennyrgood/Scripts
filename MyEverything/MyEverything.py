@@ -6,63 +6,13 @@ import shlex
 import os
 import datetime 
 import sys 
-import threading 
-import queue 
+import threading # NEW: For running search in background
+import queue # NEW: For thread-safe communication
 
 class MyEverythingApp:
-            def _open_help_popup(self):
-                    """Opens a Help pop-up with examples for 'Other Arguments'."""
-                    # Create the pop-up window
-                    help_popup = tk.Toplevel(self.master)
-                    help_popup.title("Advanced Arguments Examples")
-                    help_popup.geometry("600x400")
-        
-                    # Add a scrollable text area
-                    text_frame = ttk.Frame(help_popup)
-                    text_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-                    scrollbar = tk.Scrollbar(text_frame)
-                    text = tk.Text(text_frame, wrap="word", yscrollcommand=scrollbar.set)
-                    scrollbar.config(command=text.yview)
-        
-                    # Insert examples
-                    examples_text = """
-                    === Examples for 'Other Arguments' ===
-
-                    1. Permissions:
-                    - Find files with specific permissions:
-                        Example: -perm 755 
-                    - Exclude files with specific permissions:
-                        Example: ! -perm 644 
-
-                    2. Name and Pattern Matching:
-                    - Exclude temporary files:
-                        Example: ! -name "*.tmp"
-                    - Find multiple file types (e.g., .pyc or .log):
-                        Example: -name "*.pyc" -o -name "*.log"
-
-                    3. Date and Time Filters:
-                    - Modified after January 1, 2025:
-                        Example: -newermt "2025-01-01"
-
-                    4. Actions:
-                    - Delete matching files (USE WITH CAUTION):
-                        Example: -delete
-                    - Change permissions to 644:
-                        Example: -exec chmod 644 {} \;
-
-                    (More detailed examples can be added here.)
-                    """
-                    text.insert("1.0", examples_text)
-                    text.config(state="disabled")  # Make read-only
-                    text.pack(side="left", fill="both", expand=True)
-                    scrollbar.pack(side="right", fill="y")
-        
-                    # Close button
-                    ttk.Button(help_popup, text="Close", command=help_popup.destroy).pack(pady=5)
     
     # --- 1. CONFIGURATION CONSTANTS (Leaner, Easier to Modify) ---
-
+    
     # Defines Treeview column properties: (header_text, width, internal_data_key)
     COLUMN_SETUP = {
         "#0": {"text": "File Name", "width": 200, "data_key": "Name"},
@@ -72,7 +22,7 @@ class MyEverythingApp:
         "Accessed": {"text": "Accessed Date", "width": 120, "data_key": "Accessed_Timestamp"},
         "Changed": {"text": "Changed Date", "width": 120, "data_key": "Changed_Timestamp"},
     }
-
+    
     # Maps GUI variables to their corresponding 'find' command flags.
     FIND_FILTERS = [
         ("file_type", "-type"),
@@ -81,25 +31,32 @@ class MyEverythingApp:
         ("atime_val", "-atime"),
         ("ctime_val", "-ctime"),
     ]
-
+    
     # Visual constants
     ERROR_BG_COLOR = '#FFEDED'  # Pale red/pink background for error box
     ERROR_FG_COLOR = 'black'    # Explicit black foreground for text contrast
     
     def __init__(self, master):
         self.master = master
+        master.title("MyEverything: macOS Find GUI")
         # Set geometry for better visibility of results and error box
+        master.geometry("1000x950")
 
         # --- Variables (Filter Inputs) ---
         self.search_name = tk.StringVar(value="*")
+        self.start_path = tk.StringVar(value=os.path.expanduser("~"))
         self.case_insensitive = tk.BooleanVar(value=True) 
+        self.file_type = tk.StringVar(value="f") 
         self.size_val = tk.StringVar(value="")
         self.mtime_val = tk.StringVar(value="")
         self.atime_val = tk.StringVar(value="")
+        self.ctime_val = tk.StringVar(value="")
         self.other_args = tk.StringVar(value="") 
         
-        # --- Threading/Process Variables ---
-        self.process = None # Holds the subprocess.Popen instance (SHARED)
+        # --- Threading/Process Variables (NEW) ---
+        self.search_thread = None
+        self.process = None # Holds the subprocess.Popen instance
+        self.output_queue = queue.Queue() # Thread-safe queue for result communication
         self.temp_stderr = "" # Temporary holder for stderr output
         
         # Internal dictionary to store file metadata (raw size/timestamps) for accurate sorting
@@ -167,33 +124,25 @@ class MyEverythingApp:
         ttk.Label(filters_frame, text="Days").grid(row=3, column=6, padx=(5, 5), pady=(10, 5), sticky="w")
 
         # Row 4/5/6: Other Arguments
-        # Add "Other Arguments (Advanced)" entry field
-        ttk.Label(filters_frame, text="Other Arguments (Advanced):").grid(
-            row=4, column=0, columnspan=7, padx=5, pady=(10, 0), sticky="w")
-
-        # Create the "Other Arguments" entry widget
+        ttk.Label(filters_frame, text="Other Arguments (Advanced):").grid(row=4, column=0, columnspan=7, padx=5, pady=(10, 0), sticky="w")
+        
         other_entry = ttk.Entry(filters_frame, textvariable=self.other_args)
-        other_entry.grid(row=5, column=0, columnspan=6, padx=5, pady=(0, 5), sticky="ew")
+        other_entry.grid(row=5, column=0, columnspan=7, padx=5, pady=(0, 5), sticky="ew")
 
-        # Add the "?" help button next to the entry box
-        ttk.Button(filters_frame, text="?", command=self._open_help_popup, width=2).grid(
-            row=5, column=6, padx=5, pady=(0, 5), sticky="e")
-
-        # Add examples text below the "Other Arguments" entry or keep as is
-        examples = r'e.g., -perm 644 | ! -name ".*" | -exec "mv {} {}.bak" \;'
-        ttk.Label(filters_frame, text=examples, font=('Courier', 10)).grid(
-            row=6, column=0, columnspan=7, padx=5, pady=(0, 5), sticky="w")
+        # Examples Label
+        examples = "e.g., -perm 644 -user root -delete -exec 'mv {} {}.bak' \\;"
+        ttk.Label(filters_frame, text=examples, font=('Courier', 8)).grid(row=6, column=0, columnspan=7, padx=5, pady=(0, 5), sticky="w")
         
         filters_frame.grid_columnconfigure(6, weight=1) 
 
-        # 3. Execution Controls
+        # 3. Execution Controls (NEW: Progress bar and Cancel button)
         exec_frame = ttk.Frame(self.master)
         exec_frame.pack(pady=5, padx=10, fill="x")
 
         self.run_button = ttk.Button(exec_frame, text="▶️ Run Find Command", command=self._start_search)
         self.run_button.pack(side="left", fill="x", expand=True)
 
-        # Progress Bar
+        # Progress Bar (Indeterminate style for background processing)
         self.progress_bar = ttk.Progressbar(exec_frame, mode='indeterminate')
         self.progress_bar.pack(side="left", padx=(10, 5), fill="x", expand=True)
         
@@ -210,7 +159,7 @@ class MyEverythingApp:
         self.command_output = ttk.Entry(command_frame, state='readonly', font=('Courier', 10))
         self.command_output.pack(padx=5, pady=(0, 5), fill="x")
 
-        self.error_status_label = ttk.Label(command_frame, text="Command Errors (stderr):", foreground='black')
+        self.error_status_label = ttk.Label(command_frame, text="Command Errors (stderr):", foreground='red')
         self.error_status_label.pack(padx=5, pady=(5, 0), anchor="w")
         
         error_text_frame = ttk.Frame(command_frame)
@@ -256,12 +205,12 @@ class MyEverythingApp:
         
         self.results_tree.bind('<Double-1>', self._open_folder_in_finder)
         
-        # Status Label
+        # Status Label (Uses the 'Taller.TLabel' style)
         self.status_label = ttk.Label(self.master, text="Ready.", relief=tk.SUNKEN, anchor="w", style='Taller.TLabel')
         self.status_label.pack(fill="x", padx=10, pady=(0, 5))
 
     
-    # --- THREADING & EXECUTION METHODS ---
+    # --- THREADING & EXECUTION METHODS (PRIORITY 1) ---
     
     def _set_running_state(self, running):
         """Sets the state of the Run/Cancel buttons and progress bar."""
@@ -283,12 +232,9 @@ class MyEverythingApp:
         self.temp_stderr = "" # Clear temporary stderr holder
 
         try:
-            # 1. Clear results and force immediate redraw
+            find_command = self._build_find_command()
             self.results_tree.delete(*self.results_tree.get_children())
             self.file_data = {}
-            self.master.update_idletasks() 
-
-            find_command = self._build_find_command()
 
             # Display command being run
             quoted_command = ' '.join(shlex.quote(arg) for arg in find_command)
@@ -315,12 +261,9 @@ class MyEverythingApp:
 
     def _execute_search_threaded(self, command):
         """Executes the find command in a worker thread using Popen."""
-        
-        # Use a local variable for the process object to prevent the NoneType crash
-        p = None 
         try:
-            # 1. Create Popen instance (local reference 'p')
-            p = subprocess.Popen(
+            # Use Popen to get streaming output
+            self.process = subprocess.Popen(
                 command, 
                 stdout=subprocess.PIPE, 
                 stderr=subprocess.PIPE,
@@ -328,36 +271,30 @@ class MyEverythingApp:
                 bufsize=1
             )
             
-            # 2. Set the shared variable for the main thread (cancellation)
-            self.process = p 
-            
-            # 3. Stream stdout line by line and put into queue
-            if p.stdout:
-                for line in p.stdout:
-                    # Use the local 'p' for polling
-                    if p.poll() is not None and not line.strip(): 
+            # Stream stdout line by line and put into queue
+            if self.process.stdout:
+                for line in self.process.stdout:
+                    if self.process.poll() is not None and not line.strip(): # Check if process terminated early
                         break
                     self.output_queue.put(('result', line.strip()))
 
-            # 4. Wait for process to finish
-            p.wait()
+            # Wait for process to finish
+            self.process.wait()
 
-            # 5. Get stderr
-            stderr_output = p.stderr.read() if p.stderr else ""
+            # Put stderr into queue only if results were not processed
+            stderr_output = self.process.stderr.read() if self.process.stderr else ""
             if stderr_output:
                 self.output_queue.put(('error_output', stderr_output))
                 
-            # 6. Signal the end of the search
-            self.output_queue.put(('complete', p.returncode))
+            # Signal the end of the search
+            self.output_queue.put(('complete', self.process.returncode))
 
         except Exception as e:
             # Signal a hard error in the worker thread
             self.output_queue.put(('hard_error', f"Subprocess execution failed: {e}"))
         finally:
-            # IMPORTANT: Only clear the shared reference if it is the one we started.
-            # This prevents a slow thread from overwriting a new search's process reference.
-            if self.process is p:
-                 self.process = None
+            # Ensure process handle is cleared in the thread context
+            pass 
 
     def _process_stream_output(self):
         """Checks the queue for results/errors and updates the GUI."""
@@ -402,7 +339,7 @@ class MyEverythingApp:
         """Cleans up the state and updates the GUI with the final result."""
         
         self._set_running_state(False)
-        self.process = None # This is now less critical due to the change in _execute_search_threaded finally block
+        self.process = None
         self.search_thread = None
 
         count = len(self.results_tree.get_children())
@@ -441,7 +378,7 @@ class MyEverythingApp:
         self.error_output.delete('1.0', tk.END)
         
         if not message:
-            self.error_status_label.config(text="Command Errors (stderr):", foreground='black')
+            self.error_status_label.config(text="Command Errors (stderr):", foreground='red')
             self.error_output.config(state='disabled')
             return
 
