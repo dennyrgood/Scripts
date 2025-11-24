@@ -12,6 +12,7 @@ import argparse
 import sys
 import json
 import requests
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -52,19 +53,29 @@ def read_file_content(file_path: Path) -> str:
         return f"[Error reading file: {e}]"
 
 def find_text_conversion(file_path: str, doc_dir: Path) -> str:
-    """Check if file has a text version in md_outputs/ (for images or PDFs)"""
+    """Check if file has a text/markdown version in md_outputs/ (for images, PDFs, or DOCX)"""
     file_name = Path(file_path).name
     file_stem = Path(file_path).stem
+    file_ext = Path(file_path).suffix.lower()
     
-    # Try exact match first: IMG_4664.jpeg.txt or document.pdf.txt
-    text_file = doc_dir / "md_outputs" / (file_name + ".txt")
-    if text_file.exists():
-        return text_file.read_text(encoding='utf-8', errors='replace')[:2000]
+    # For images: look for .txt conversions
+    if file_ext in {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+        # Try exact match first: IMG_4664.jpeg.txt
+        text_file = doc_dir / "md_outputs" / (file_name + ".txt")
+        if text_file.exists():
+            return text_file.read_text(encoding='utf-8', errors='replace')[:2000]
+        
+        # Try stem only: IMG_4664.txt
+        text_file = doc_dir / "md_outputs" / (file_stem + ".txt")
+        if text_file.exists():
+            return text_file.read_text(encoding='utf-8', errors='replace')[:2000]
     
-    # Try stem only: IMG_4664.txt or document.txt
-    text_file = doc_dir / "md_outputs" / (file_stem + ".txt")
-    if text_file.exists():
-        return text_file.read_text(encoding='utf-8', errors='replace')[:2000]
+    # For PDFs and DOCX: look for .md conversions
+    elif file_ext in {'.pdf', '.docx', '.doc'}:
+        # Try stem: document.md
+        md_file = doc_dir / "md_outputs" / (file_stem + ".md")
+        if md_file.exists():
+            return md_file.read_text(encoding='utf-8', errors='replace')[:2000]
     
     return None
 
@@ -254,26 +265,42 @@ def main():
             print(f"  ⚠ File not found\n")
             continue
         
-        # Check if this is an image or PDF and we have a text conversion
+        # Check if this is an image, PDF, or DOCX and we have a text conversion
         content = None
         text_conversion_path = None
         file_ext = full_path.suffix.lower()
         
-        if file_ext in {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.pdf'}:
+        if file_ext in {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.pdf', '.docx', '.doc'}:
             converted_text = find_text_conversion(file_path, doc_dir)
             if converted_text:
                 content = converted_text
-                # Try to find which text file was actually used
+                # Try to find which text/markdown file was actually used
                 file_stem = full_path.stem
-                text_file_stem = doc_dir / "md_outputs" / (file_stem + ".txt")
-                text_file_full = doc_dir / "md_outputs" / (full_path.name + ".txt")
                 
-                if text_file_stem.exists():
-                    text_conversion_path = f"./md_outputs/{file_stem}.txt"
-                elif text_file_full.exists():
-                    text_conversion_path = f"./md_outputs/{full_path.name}.txt"
+                # For images: look for .txt
+                if file_ext in {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+                    text_file_stem = doc_dir / "md_outputs" / (file_stem + ".txt")
+                    text_file_full = doc_dir / "md_outputs" / (full_path.name + ".txt")
+                    
+                    if text_file_stem.exists():
+                        text_conversion_path = f"./md_outputs/{file_stem}.txt"
+                    elif text_file_full.exists():
+                        text_conversion_path = f"./md_outputs/{full_path.name}.txt"
+                    
+                    conversion_type = "OCR text"
                 
-                conversion_type = "PDF text" if file_ext == '.pdf' else "OCR text"
+                # For PDFs and DOCX: look for .md
+                elif file_ext in {'.pdf', '.docx', '.doc'}:
+                    md_file = doc_dir / "md_outputs" / (file_stem + ".md")
+                    
+                    if md_file.exists():
+                        text_conversion_path = f"./md_outputs/{file_stem}.md"
+                    
+                    if file_ext == '.pdf':
+                        conversion_type = "PDF markdown"
+                    else:
+                        conversion_type = "DOCX markdown"
+                
                 print(f"  ℹ Using {conversion_type} conversion")
         
         # If no text conversion, read file content normally
@@ -344,6 +371,12 @@ def main():
     print(f"✓ Saved to {pending_path}")
     print(f"\nNext step:")
     print(f"  Run: dms review")
+    
+    # Prompt to continue
+    choice = input(f"\nStart 'dms review' now? [y/N]: ").strip().lower()
+    if choice == 'y':
+        result = subprocess.run(['dms', 'review'])
+        return result.returncode
     
     return 0
 

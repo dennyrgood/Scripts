@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
-dms_image_to_text.py - Convert images to text
+dms_image_to_text.py - Convert images, PDFs, and DOCX files to text/markdown
 
-Reads .dms_scan.json to find images in new files.
-- Converts images (PNG, JPG) to text via OCR (tesseract)
-Outputs text files to md_outputs/ for later summarization.
+Reads .dms_scan.json to find convertible files.
+- Converts images (PNG, JPG, etc.) to text via OCR (tesseract)
+- Converts PDFs to markdown via pandoc
+- Converts DOCX to markdown via pandoc
+Outputs text/markdown files to md_outputs/ for later summarization.
 
 Does NOT update any state files - just produces intermediate text files.
 """
@@ -22,19 +24,31 @@ def load_scan_results(scan_path: Path) -> dict:
     
     return json.loads(scan_path.read_text(encoding='utf-8'))
 
-def find_convertible_files(files: list, doc_dir: Path) -> list:
-    """Find image files in the list"""
+def find_convertible_files(files: list, doc_dir: Path) -> dict:
+    """Find image, PDF, and DOCX files in the list"""
     image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}
+    pdf_exts = {'.pdf'}
+    docx_exts = {'.docx', '.doc'}
     
     images = []
+    pdfs = []
+    docx_files = []
     
     for file_info in files:
         file_path = file_info.get('path', '')
         ext = Path(file_path).suffix.lower()
         if ext in image_exts:
             images.append(file_path)
+        elif ext in pdf_exts:
+            pdfs.append(file_path)
+        elif ext in docx_exts:
+            docx_files.append(file_path)
     
-    return images
+    return {
+        'images': images,
+        'pdfs': pdfs,
+        'docx': docx_files
+    }
 
 def convert_image_to_text(image_path: str, doc_dir: Path, md_dir: Path) -> bool:
     """Convert image to text using tesseract"""
@@ -77,6 +91,91 @@ def convert_image_to_text(image_path: str, doc_dir: Path, md_dir: Path) -> bool:
         return False
 
 
+def convert_pdf_to_markdown(pdf_path: str, doc_dir: Path, md_dir: Path) -> bool:
+    """Convert PDF to text using pdftotext, then save as markdown"""
+    
+    full_path = doc_dir / pdf_path.lstrip('./')
+    
+    if not full_path.exists():
+        print(f"  ⚠ PDF not found: {pdf_path}")
+        return False
+    
+    # Create output filename
+    output_filename = f"{Path(pdf_path).stem}.md"
+    output_path = md_dir / output_filename
+    
+    if output_path.exists():
+        print(f"  ✓ Already converted: {output_filename}")
+        return True
+    
+    try:
+        # Use pdftotext to extract text from PDF
+        result = subprocess.run(
+            ['pdftotext', str(full_path), '-'],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        if result.returncode == 0 and result.stdout:
+            # Save as markdown with header
+            md_content = f"# {Path(pdf_path).stem}\n\nExtracted from PDF: {Path(pdf_path).name}\n\n---\n\n{result.stdout}"
+            output_path.write_text(md_content, encoding='utf-8')
+            print(f"  ✓ Converted: {output_filename}")
+            return True
+        else:
+            print(f"  ✗ Failed to convert {pdf_path}: {result.stderr[:100]}")
+            return False
+            
+    except FileNotFoundError:
+        print(f"  ✗ pdftotext not found - install with: brew install poppler")
+        return False
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+        return False
+
+
+def convert_docx_to_markdown(docx_path: str, doc_dir: Path, md_dir: Path) -> bool:
+    """Convert DOCX to markdown using pandoc"""
+    
+    full_path = doc_dir / docx_path.lstrip('./')
+    
+    if not full_path.exists():
+        print(f"  ⚠ DOCX not found: {docx_path}")
+        return False
+    
+    # Create output filename
+    output_filename = f"{Path(docx_path).stem}.md"
+    output_path = md_dir / output_filename
+    
+    if output_path.exists():
+        print(f"  ✓ Already converted: {output_filename}")
+        return True
+    
+    try:
+        # Use pandoc to convert DOCX to markdown
+        result = subprocess.run(
+            ['pandoc', str(full_path), '-t', 'markdown', '-o', str(output_path)],
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        if result.returncode == 0 and output_path.exists():
+            print(f"  ✓ Converted: {output_filename}")
+            return True
+        else:
+            print(f"  ✗ Failed to convert {docx_path}: {result.stderr[:100]}")
+            return False
+            
+    except FileNotFoundError:
+        print(f"  ✗ pandoc not found - install with: brew install pandoc")
+        return False
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert images to text")
     parser.add_argument("--doc", default="Doc", help="Doc directory")
@@ -97,23 +196,55 @@ def main():
     scan_data = load_scan_results(scan_path)
     all_files = scan_data.get('new_files', []) + scan_data.get('changed_files', [])
     
-    images = find_convertible_files(all_files, doc_dir)
+    files_by_type = find_convertible_files(all_files, doc_dir)
+    images = files_by_type['images']
+    pdfs = files_by_type['pdfs']
+    docx_files = files_by_type['docx']
     
-    if not images:
-        print("No images to convert")
+    total_convertible = len(images) + len(pdfs) + len(docx_files)
+    
+    if not total_convertible:
+        print("No images, PDFs, or DOCX files to convert")
         return 0
     
-    print(f"\n==> Converting images to text...\n")
+    print(f"\n==> Converting documents to text/markdown...\n")
     
-    print(f"Images ({len(images)}):")
-    converted_img = 0
-    for image_path in images:
-        if convert_image_to_text(image_path, doc_dir, md_dir):
-            converted_img += 1
-    print(f"✓ {converted_img}/{len(images)} images converted\n")
+    converted = 0
+    
+    # Convert images
+    if images:
+        print(f"Images ({len(images)}):")
+        for image_path in images:
+            if convert_image_to_text(image_path, doc_dir, md_dir):
+                converted += 1
+        print()
+    
+    # Convert PDFs
+    if pdfs:
+        print(f"PDFs ({len(pdfs)}):")
+        for pdf_path in pdfs:
+            if convert_pdf_to_markdown(pdf_path, doc_dir, md_dir):
+                converted += 1
+        print()
+    
+    # Convert DOCX files
+    if docx_files:
+        print(f"DOCX files ({len(docx_files)}):")
+        for docx_path in docx_files:
+            if convert_docx_to_markdown(docx_path, doc_dir, md_dir):
+                converted += 1
+        print()
+    
+    print(f"✓ {converted}/{total_convertible} files converted\n")
     
     print("Next step:")
     print("  Run: dms summarize")
+    
+    # Prompt to continue
+    choice = input(f"\nStart 'dms summarize' now? [y/N]: ").strip().lower()
+    if choice == 'y':
+        result = subprocess.run(['dms', 'summarize'])
+        return result.returncode
     
     return 0
 

@@ -37,8 +37,8 @@ import subprocess
 CONFIG_NAME = "dms_config.json"
 
 def find_scripts_dir() -> Path:
-    """Return the Scripts directory at known location"""
-    scripts_dir = Path.home() / "Documents" / "MyWebsiteGIT" / "Scripts"
+    """Return the Scripts directory (determined by this script's location)"""
+    scripts_dir = Path(__file__).parent
     if not scripts_dir.exists():
         print(f"ERROR: Scripts directory not found at {scripts_dir}", file=sys.stderr)
         sys.exit(1)

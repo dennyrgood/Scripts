@@ -124,7 +124,8 @@ def _generate_html(docs_by_category, state):
     /* PDF viewer should take full height */
     #pdfViewer{{height:80vh !important;}}
 
-SCRIPTS_DIR = Path.home() / "Documents/MyWebsiteGIT/Scripts"
+# Scripts dir is 2 levels up from this file's location
+SCRIPTS_DIR = Path(__file__).parent.parent
 
     /* markdown container */
     #mdViewer{{background:rgba(255,255,255,0.01);padding:18px;border-radius:8px}}
@@ -228,6 +229,34 @@ SCRIPTS_DIR = Path.home() / "Documents/MyWebsiteGIT/Scripts"
       rawViewer.style.display = 'none';
       
       const e = extOf(path);
+      
+      // For DOCX files: show markdown version by default
+      if(e === 'docx' || e === 'doc'){{
+        const mdPath = './md_outputs/' + path.split('/').pop().split('.')[0] + '.md';
+        safeFetchText(mdPath).then(txt=>{{
+          mdViewer.innerHTML = marked.parse(txt);
+          mdViewer.style.display = 'block';
+          const docxInfo = document.createElement('div');
+          docxInfo.className = 'small-muted';
+          docxInfo.style.marginBottom = '12px';
+          docxInfo.innerHTML = `Source DOCX: <a class="inline-link" href="${{path}}" target="_blank" rel="noopener">📥 Download ${{path}}</a>`;
+          if(mdViewer.firstChild) mdViewer.insertBefore(docxInfo, mdViewer.firstChild);
+          else mdViewer.appendChild(docxInfo);
+        }}).catch(err=>{{
+          rawViewer.style.display = 'block';
+          rawViewer.innerHTML = `
+            <div style="padding: 12px;">
+              <p style="margin-top: 0;">DOCX file options:</p>
+              <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <a href="${{path}}" target="_blank" rel="noopener" style="padding: 8px 12px; background: var(--accent); color: #000; border-radius: 6px; text-decoration: none; font-weight: 500;">📥 Download File</a>
+              </div>
+              <p style="color: var(--muted); font-size: 13px; margin-top: 12px;">Converted markdown preview not available</p>
+            </div>
+          `;
+        }});
+        return;
+      }}
+      
       if(e === 'md' || path.endsWith('.md') || path.includes('md_outputs')){{
         safeFetchText(path).then(txt=>{{
           mdViewer.innerHTML = marked.parse(txt);
@@ -250,12 +279,6 @@ SCRIPTS_DIR = Path.home() / "Documents/MyWebsiteGIT/Scripts"
         const pdfPath = (e === 'pdf') ? path : pdf;
         pdfViewer.src = pdfPath;
         pdfViewer.style.display = 'block';
-        return;
-      }}
-      
-      if(e === 'docx' || e === 'doc'){{
-        rawViewer.style.display = 'block';
-        rawViewer.innerHTML = `This is a binary Office file. <a class="inline-link" href="${{path}}" target="_blank" rel="noopener">Open ${{path}}</a>`;
         return;
       }}
       
@@ -359,7 +382,7 @@ def _generate_category_section(category, docs):
         summary = html_module.escape(doc_data.get("summary", ""))
         path_escaped = html_module.escape(file_path)
         
-        # Check if this has an original file link (image paired with text)
+        # Check if this has an original file link (image/PDF/DOCX paired with converted version)
         original_link = ""
         if doc_data.get("readable_version"):
             readable_path = html_module.escape(doc_data["readable_version"])
@@ -368,10 +391,29 @@ def _generate_category_section(category, docs):
             if readable_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp')):
                 icon = "🖼️"
                 label = "View Image"
+            elif readable_path.lower().endswith('.md'):
+                # Could be from PDF or DOCX
+                if file_path.lower().endswith('.pdf'):
+                    icon = "📄"
+                    label = "View PDF Text"
+                elif file_path.lower().endswith(('.docx', '.doc')):
+                    # For DOCX: link in summary downloads the DOCX file
+                    icon = "📋"
+                    label = "Download Document"
+                    original_link = f'<br><small><a href="{path_escaped}" download style="color:var(--accent-2)">{icon} {label}</a></small>'
+                else:
+                    icon = "📄"
+                    label = "View Markdown"
+            elif readable_path.lower().endswith(('.txt', '.text')):
+                icon = "📄"
+                label = "View OCR Text"
             else:
                 icon = "📄"
-                label = "View Text/OCR"
-            original_link = f'<br><small><a href="#{readable_path}" style="color:var(--accent-2)">{icon} {label}</a></small>'
+                label = "View Converted"
+            
+            # For DOCX, we already set the link above, so skip the normal assignment
+            if not (file_path.lower().endswith(('.docx', '.doc')) and readable_path.lower().endswith('.md')):
+                original_link = f'<br><small><a href="#{readable_path}" style="color:var(--accent-2)">{icon} {label}</a></small>'
         
         li = f"""            <li class="file" data-path="{path_escaped}" data-link="{path_escaped}">
       <div class="meta">

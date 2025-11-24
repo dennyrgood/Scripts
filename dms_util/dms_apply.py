@@ -140,11 +140,17 @@ def apply_changes(state_path: Path, pending_path: Path, scripts_dir: Path) -> in
     print(f"  - .dms_state.json")
     print(f"  - index.html")
     
+    # Prompt to continue with scan
+    choice = input(f"\nStart 'dms scan' again to check for more changes? [y/N]: ").strip().lower()
+    if choice == 'y':
+        result = subprocess.run(['dms', 'scan'])
+        return result.returncode
+    
     return 0
 
 def find_scripts_dir() -> Path:
-    """Return the Scripts directory"""
-    return Path.home() / "Documents/MyWebsiteGIT/Scripts"
+    """Return the Scripts directory (2 levels up from this utility file)"""
+    return Path(__file__).parent.parent
 
 def main():
     parser = argparse.ArgumentParser(description="Apply approved changes to index")

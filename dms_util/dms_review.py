@@ -13,10 +13,12 @@ User can:
 import argparse
 import sys
 import json
+import subprocess
 from pathlib import Path
 
 
-SCRIPTS_DIR = Path.home() / "Documents/MyWebsiteGIT/Scripts"
+# Scripts dir is 2 levels up from this file's location
+SCRIPTS_DIR = Path(__file__).parent.parent
 
 def load_pending_summaries(pending_path: Path) -> dict:
     """Load pending summaries from summarize step"""
@@ -128,6 +130,12 @@ def main():
     print(f"✓ Saved {len(approved)} approved summary/summaries to {approved_path}")
     print(f"\nNext step:")
     print(f"  Run: dms apply")
+    
+    # Prompt to continue
+    choice = input(f"\nStart 'dms apply' now? [y/N]: ").strip().lower()
+    if choice == 'y':
+        result = subprocess.run(['dms', 'apply'])
+        return result.returncode
     
     # Cleanup pending file
     if pending_path.exists():

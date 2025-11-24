@@ -14,6 +14,7 @@ import argparse
 import sys
 import json
 import hashlib
+import subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -203,11 +204,21 @@ def print_report(new_files, changed_files, missing_files, status_only=False):
     
     return total
 
-def check_for_images(new_files):
-    """Check if new files include images that need OCR"""
+def check_for_convertible_files(new_files):
+    """Check if new files include images, PDFs, or DOCX files that need conversion"""
     image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.webp'}
+    pdf_exts = {'.pdf'}
+    docx_exts = {'.docx', '.doc'}
+    
     images = [f for f in new_files if Path(f['path']).suffix.lower() in image_exts]
-    return images
+    pdfs = [f for f in new_files if Path(f['path']).suffix.lower() in pdf_exts]
+    docx_files = [f for f in new_files if Path(f['path']).suffix.lower() in docx_exts]
+    
+    return {
+        'images': images,
+        'pdfs': pdfs,
+        'docx': docx_files
+    }
 
 def main():
     parser = argparse.ArgumentParser(description="Scan Doc/ directory for changes")
@@ -251,13 +262,51 @@ def main():
     
     print(f"\n✓ Scan results saved to {scan_file}")
     
-    # Check for images that need OCR
-    images_found = check_for_images(new_files)
+    # Save missing files for deletion workflow
+    if missing_files:
+        missing_for_deletion = {
+            "timestamp": datetime.now().isoformat(),
+            "files": missing_files
+        }
+        
+        deletion_file = doc_dir / ".dms_missing_for_deletion.json"
+        deletion_file.write_text(json.dumps(missing_for_deletion, indent=2))
+        print(f"✓ Saved missing files to {deletion_file.name}")
+    
+    # Clean up old pending files from previous workflow runs
+    pending_summaries = doc_dir / ".dms_pending_summaries.json"
+    pending_approved = doc_dir / ".dms_pending_approved.json"
+    deletion_pending = doc_dir / ".dms_deletion_pending.json"
+    
+    if pending_summaries.exists():
+        pending_summaries.unlink()
+        print(f"✓ Cleared old {pending_summaries.name}")
+    if pending_approved.exists():
+        pending_approved.unlink()
+        print(f"✓ Cleared old {pending_approved.name}")
+    if deletion_pending.exists():
+        deletion_pending.unlink()
+        print(f"✓ Cleared old {deletion_pending.name}")
+    
+    # Check for files that need conversion
+    convertible = check_for_convertible_files(new_files)
+    images_found = convertible['images']
+    pdfs_found = convertible['pdfs']
+    docx_found = convertible['docx']
+    total_convertible = len(images_found) + len(pdfs_found) + len(docx_found)
     
     print(f"\nNext steps:")
-    if images_found:
-        print(f"  1. Run: dms image-to-text (convert {len(images_found)} image(s) to text)")
-        print(f"  2. Run: dms summarize (generate summaries for text and other files)")
+    if total_convertible:
+        conversion_files = []
+        if images_found:
+            conversion_files.append(f"{len(images_found)} image(s)")
+        if pdfs_found:
+            conversion_files.append(f"{len(pdfs_found)} PDF(s)")
+        if docx_found:
+            conversion_files.append(f"{len(docx_found)} DOCX file(s)")
+        
+        print(f"  1. Run: dms image-to-text (convert {', '.join(conversion_files)} to text/markdown)")
+        print(f"  2. Run: dms summarize (generate summaries for converted files)")
     else:
         print(f"  1. Run: dms summarize (to generate summaries for new files)")
     print(f"  2. Run: dms review (to approve changes)")
@@ -268,12 +317,25 @@ def main():
         print(f"  The following files are in the index but no longer exist on disk:")
         for f in missing_files:
             print(f"    • {f['path']} (was in {f['was_category']})")
-        print(f"\n  To remove these from the index:")
+        print(f"\n  To review and delete these from the index:")
+        print(f"    Run: dms delete-entry")
+        print(f"\n  Or to auto-remove all of them:")
         print(f"    Run: dms cleanup")
         print(f"\n  This will:")
         print(f"    1. Remove missing files from .dms_state.json")
         print(f"    2. Regenerate index.html without those entries")
         print(f"\n  Note: You can run cleanup at any time (before or after applying new changes)")
+    
+    # Prompt to continue
+    if total_convertible:
+        next_cmd = "image-to-text"
+    else:
+        next_cmd = "summarize"
+    
+    choice = input(f"\nStart 'dms {next_cmd}' now? [y/N]: ").strip().lower()
+    if choice == 'y':
+        result = subprocess.run(['dms', next_cmd])
+        return result.returncode
     
     return 0
 

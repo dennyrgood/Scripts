@@ -73,7 +73,7 @@ def check_system():
 
 def show_categories_submenu():
     """Display categories management submenu"""
-    scripts_dir = Path.home() / "Documents" / "MyWebsiteGIT" / "Scripts"
+    scripts_dir = Path(__file__).parent
     script_path = scripts_dir / "dms_util" / "dms_categories_interactive.py"
     
     import subprocess
@@ -237,7 +237,7 @@ Common models:
   qwen2.5-coder:7b (better quality)
   mistral:7b (balanced)
 
-Current config: ~/Documents/MyWebsiteGIT/Scripts/dms_config.json
+Current config: Scripts/dms_config.json
 """)
             print("="*60 + "\n")
             input("Press Enter to continue...")

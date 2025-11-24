@@ -86,7 +86,58 @@ def delete_entry(state: dict, file_path: str) -> bool:
     return True
 
 
-def delete_by_pattern(state: dict, pattern: str, words_over: int = None) -> int:
+def review_missing_files(state: dict, doc_dir: Path) -> int:
+    """Review and delete missing files interactively"""
+    docs = state.get('documents', {})
+    
+    # Load missing files from scan
+    missing_file_path = doc_dir / ".dms_missing_for_deletion.json"
+    if not missing_file_path.exists():
+        print("\nNo missing files detected. (Run 'dms scan' first)")
+        return 0
+    
+    try:
+        missing_data = json.loads(missing_file_path.read_text(encoding='utf-8'))
+        missing_files = missing_data.get('files', [])
+    except Exception as e:
+        print(f"ERROR: Could not load missing files: {e}")
+        return 0
+    
+    if not missing_files:
+        print("\nNo missing files to review.")
+        return 0
+    
+    print(f"\n==> Review Missing Files ({len(missing_files)} total)\n")
+    
+    deleted = 0
+    for i, file_info in enumerate(missing_files, 1):
+        file_path = file_info.get('path')
+        was_category = file_info.get('was_category', 'Unknown')
+        
+        if file_path not in docs:
+            print(f"  [{i}/{len(missing_files)}] {file_path} (already deleted)")
+            continue
+        
+        doc = docs[file_path]
+        summary = doc.get('summary', '')
+        word_count = len(summary.split())
+        
+        print(f"\n  [{i}/{len(missing_files)}] {file_path}")
+        print(f"  Category: {was_category} | Words: {word_count}")
+        print(f"  Summary: {summary[:80]}...")
+        
+        choice = input(f"\n  Delete? [y/N]: ").strip().lower()
+        if choice == 'y':
+            del docs[file_path]
+            print(f"  ✓ Deleted")
+            deleted += 1
+        else:
+            print(f"  - Kept")
+    
+    if deleted > 0:
+        print(f"\n✓ Deleted {deleted}/{len(missing_files)} missing file entries")
+    
+    return deleted
     """Delete all entries matching pattern"""
     docs = state.get('documents', {})
     pattern_lower = pattern.lower()
@@ -144,10 +195,11 @@ def interactive_menu(state: dict, state_path: Path) -> int:
         print("  2. Delete by pattern")
         print("  3. Delete entries with long summaries (>50 words)")
         print("  4. Search and delete")
-        print("  5. Exit without saving")
-        print("\n6. SAVE and exit")
+        print("  5. Review and delete missing files")
+        print("  6. Exit without saving")
+        print("\n7. SAVE and exit")
         
-        choice = input("\nEnter choice (1-6): ").strip()
+        choice = input("\nEnter choice (1-7): ").strip()
         
         if choice == "1":
             list_entries(state)
@@ -222,10 +274,17 @@ def interactive_menu(state: dict, state_path: Path) -> int:
                 input("\nPress Enter to continue...")
         
         elif choice == "5":
+            # Review missing files
+            deleted = review_missing_files(state, state_path.parent)
+            if deleted > 0:
+                docs = state.get('documents', {})
+            input("\nPress Enter to continue...")
+        
+        elif choice == "6":
             print("Exiting without saving.")
             return 0
         
-        elif choice == "6":
+        elif choice == "7":
             if docs:
                 state_path.write_text(json.dumps(state, indent=2), encoding='utf-8')
                 print("\n✓ State saved!")
