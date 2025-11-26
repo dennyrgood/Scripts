@@ -102,6 +102,9 @@ def _generate_html(docs_by_category, state):
     .search{{flex:1;display:flex;align-items:center;background:var(--glass);padding:8px;border-radius:8px}}
     .search input{{flex:1;border:0;background:transparent;color:inherit;padding:6px 8px;font-size:14px;outline:none}}
     .search small{{color:var(--muted);font-size:12px;margin-left:6px}}
+    .sort-btn{{padding:8px 12px;background:var(--glass);border:1px solid rgba(255,255,255,0.1);border-radius:8px;color:inherit;cursor:pointer;font-size:13px;white-space:nowrap;transition:background 0.2s}}
+    .sort-btn:hover{{background:rgba(255,255,255,0.08)}}
+    .sort-btn.active{{background:var(--accent);color:#000;font-weight:600}}
     .category {{margin-top:10px}}
     .category h2{{margin:6px 0 6px;font-size:13px;color:var(--accent)}}
     ul.files{{list-style:none;padding:0;margin:0}}
@@ -173,6 +176,7 @@ SCRIPTS_DIR = Path(__file__).parent.parent
           <input type="text" id="searchInput" placeholder="Search..." />
           <small id="resultCount">0 shown</small>
         </div>
+        <button id="sortBtn" class="sort-btn" title="Sort by date (most recent first)">📅 Newest</button>
       </div>
 
       {"".join(categories_html)}
@@ -194,11 +198,14 @@ SCRIPTS_DIR = Path(__file__).parent.parent
 
   <script>
     const searchInput = document.getElementById('searchInput');
+    const sortBtn = document.getElementById('sortBtn');
     const resultCount = document.getElementById('resultCount');
     const viewerTitle = document.getElementById('viewerTitle');
     const mdViewer = document.getElementById('mdViewer');
     const rawViewer = document.getElementById('rawViewer');
     const pdfViewer = document.getElementById('pdfViewer');
+    
+    let sortByDate = false;
 
     function extOf(path) {{
       const ext = path.split('.').pop()?.toLowerCase() || '';
@@ -307,23 +314,42 @@ SCRIPTS_DIR = Path(__file__).parent.parent
     function filterFiles(q){{
       q = (q||'').toLowerCase().trim();
       const files = document.querySelectorAll('li.file');
-      let visible = 0;
+      let visible = [];
       files.forEach(li=>{{
         const title = li.querySelector('.title').innerText.toLowerCase();
         const desc = li.querySelector('.desc').innerText.toLowerCase();
         const tags = li.querySelector('.tags').innerText.toLowerCase();
         if(!q || title.includes(q) || desc.includes(q) || tags.includes(q)){{
           li.style.display = '';
-          visible++;
+          visible.push({{el: li, mtime: li.dataset.mtime || ''}});
         }} else {{
           li.style.display = 'none';
         }}
       }});
-      resultCount.textContent = visible ? `${{visible}} shown` : 'no results';
+      
+      if(sortByDate){{
+        visible.sort((a,b)=>{{
+          if(!a.mtime || !b.mtime) return 0;
+          return new Date(b.mtime) - new Date(a.mtime);
+        }});
+        
+        visible.forEach(item=>{{
+          item.el.parentElement.appendChild(item.el);
+        }});
+      }}
+      
+      resultCount.textContent = visible.length ? `${{visible.length}} shown` : 'no results';
     }}
 
     searchInput.addEventListener('input', (e)=>{{
       filterFiles(e.target.value);
+    }});
+
+    sortBtn.addEventListener('click', ()=>{{
+      sortByDate = !sortByDate;
+      sortBtn.classList.toggle('active', sortByDate);
+      sortBtn.textContent = sortByDate ? '📅 Oldest' : '📅 Newest';
+      filterFiles(searchInput.value);
     }});
 
     window.addEventListener('load', ()=>{{
@@ -415,7 +441,7 @@ def _generate_category_section(category, docs):
             if not (file_path.lower().endswith(('.docx', '.doc')) and readable_path.lower().endswith('.md')):
                 original_link = f'<br><small><a href="#{readable_path}" style="color:var(--accent-2)">{icon} {label}</a></small>'
         
-        li = f"""            <li class="file" data-path="{path_escaped}" data-link="{path_escaped}">
+        li = f"""            <li class="file" data-path="{path_escaped}" data-link="{path_escaped}" data-mtime="{doc_data.get('file_mtime', '')}">
       <div class="meta">
         <div class="title"><a href="#{path_escaped}" class="file-link">{title}</a></div>
         <div class="desc">{summary}{original_link}</div>
